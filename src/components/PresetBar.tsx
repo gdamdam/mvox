@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MvoxPatch } from '../audio/contracts'
 import { FACTORY_PRESETS, getFactoryPreset } from '../persistence/presets'
-import { exportPatchJSON, importPatchJSON } from '../persistence/schema'
+import { exportPatchJSON, importPatchJSON, migratePatch } from '../persistence/schema'
 import {
   idbAvailable,
   idbDeletePreset,
@@ -29,11 +29,24 @@ export function PresetBar({ patch, onLoad }: Props) {
   const [userPresets, setUserPresets] = useState<UserPreset[]>([])
   const [shareMsg, setShareMsg] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+  // Latest-wins guard: concurrent list()s (e.g. save + delete) can resolve out of
+  // order, and a resolve after unmount would set state on a dead component.
+  const reqToken = useRef(0)
+  const mounted = useRef(true)
 
   const refresh = () => {
-    if (idbAvailable()) void idbListPresets().then(setUserPresets)
+    if (!idbAvailable()) return
+    const token = ++reqToken.current
+    void idbListPresets().then((list) => {
+      if (mounted.current && token === reqToken.current) setUserPresets(list)
+    })
   }
-  useEffect(refresh, [])
+  useEffect(() => {
+    refresh()
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const saveUser = async () => {
     const name = window.prompt('Preset name?', patch.name || 'My patch')
@@ -54,7 +67,9 @@ export function PresetBar({ patch, onLoad }: Props) {
     a.href = url
     a.download = `${(patch.name || 'mvox-patch').replace(/\s+/g, '-')}.json`
     a.click()
-    URL.revokeObjectURL(url)
+    // Revoking synchronously after click() can abort the download in some browsers
+    // (Firefox); defer so the download has started.
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   const doImport = (file: File) => {
@@ -127,7 +142,7 @@ export function PresetBar({ patch, onLoad }: Props) {
         <div className="presets__user">
           {userPresets.map((p) => (
             <span key={p.id} className="presets__chip">
-              <button type="button" onClick={() => onLoad({ ...p.patch, name: p.name })}>
+              <button type="button" onClick={() => onLoad(migratePatch({ ...p.patch, name: p.name }))}>
                 {p.name}
               </button>
               <button type="button" className="presets__x" aria-label={`Delete ${p.name}`} onClick={() => del(p.id)}>

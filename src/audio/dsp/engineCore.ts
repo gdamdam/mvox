@@ -17,7 +17,7 @@ import { EnvelopeFollower, vocoderBandFrequencies, vocoderBandQ } from './vocode
 import { FxChain } from './fx'
 import { PitchShifter } from './pitchShifter'
 import { PitchTracker } from './pitch'
-import { diatonicHarmony, hzToMidi, midiToHz } from './scale'
+import { diatonicHarmony, hzToMidi, midiToHz, snapMidiToScale } from './scale'
 
 export interface EngineTelemetry {
   inputLevel: number
@@ -29,6 +29,24 @@ export interface EngineTelemetry {
 
 const MAX_BANDS = 32
 const HARMONY_VOICES = 4
+
+// FORMANT resonator center frequencies (Hz), scaled at runtime by shift+size.
+// Module-level so processFormant allocates nothing on the render hot path.
+const FORMANT_BASES = [650, 1080, 2650]
+
+// PolyBLEP residual correction around discontinuities (t in [0,1), dt = phase
+// inc). Mirrors CarrierSynth's anti-aliasing so FOLLOW's saw/pulse don't alias.
+function polyBlep(t: number, dt: number): number {
+  if (t < dt) {
+    const x = t / dt
+    return x + x - x * x - 1
+  }
+  if (t > 1 - dt) {
+    const x = (t - 1) / dt
+    return x * x + x + x + 1
+  }
+  return 0
+}
 
 interface Band {
   analysis: Biquad
@@ -61,6 +79,10 @@ export class MvoxEngineCore {
   private readonly robotShifter: PitchShifter
   private ringPhase = 0
   private noiseState = 22222
+  // Last-seen formant controls; the resonator biquads hold their coeffs, so we
+  // recompute (and allocate) only when shift/size actually move, not per sample.
+  private formantLastShift = Number.NaN
+  private formantLastSize = Number.NaN
 
   // FOLLOW: single glided oscillator frequency + its own carrier for the synth.
   private followHz = 0
@@ -154,6 +176,12 @@ export class MvoxEngineCore {
     this.robotShifter.reset()
     for (const r of this.formantRes) r.reset()
     this.ringPhase = 0
+    // Clear FOLLOW glide/gate state so switching modes doesn't leave the voice
+    // count stuck +1 or glide the next note from a stale pre-reset pitch.
+    this.followHz = 0
+    this.followTargetHz = 0
+    this.followGate = false
+    this.followOscPhase = 0
     this.demoPos = 0
   }
 
@@ -321,12 +349,19 @@ export class MvoxEngineCore {
 
     // Formant/size: three peaking resonators whose centers move with shift+size,
     // imposing a movable vowel colour (an honest v1 formant shaping — see README).
-    const shiftRatio = Math.pow(2, p.shift / 12) * p.size
-    const bases = [650, 1080, 2650]
+    // Redesign the resonators only when the vowel controls move — cos/sin and the
+    // coeff allocation would otherwise run 3x per sample on the render hot path.
+    if (p.shift !== this.formantLastShift || p.size !== this.formantLastSize) {
+      const shiftRatio = Math.pow(2, p.shift / 12) * p.size
+      for (let i = 0; i < 3; i += 1) {
+        const fc = Math.max(80, Math.min(this.sampleRate * 0.45, FORMANT_BASES[i] * shiftRatio))
+        this.formantRes[i].setCoeffs(bandpassCoeffs(this.sampleRate, fc, 4))
+      }
+      this.formantLastShift = p.shift
+      this.formantLastSize = p.size
+    }
     let res = 0
     for (let i = 0; i < 3; i += 1) {
-      const fc = Math.max(80, Math.min(this.sampleRate * 0.45, bases[i] * shiftRatio))
-      this.formantRes[i].setCoeffs(bandpassCoeffs(this.sampleRate, fc, 4))
       res += this.formantRes[i].process(sample)
     }
     const formantAmt = Math.min(1, Math.abs(p.shift) / 12 + Math.abs(p.size - 1))
@@ -347,9 +382,17 @@ export class MvoxEngineCore {
     const p = this.patch.follow
     const gateOpen = confidence >= p.confidenceGate && f0 > 0
     if (gateOpen) {
-      this.followTargetHz = f0
       if (!this.followGate) {
-        // New note: snap to scale for musical output, seed glide from current.
+        // New note: snap the target to the nearest scale tone (shared key/scale)
+        // for musical output; the glide then seeds from the current pitch. We snap
+        // only on gate-open (not per sample) so scale.ts's array-allocating helpers
+        // stay off the render hot path.
+        const snapped = snapMidiToScale(
+          hzToMidi(f0),
+          this.patch.shared.keyRoot,
+          this.patch.shared.scaleMode,
+        )
+        this.followTargetHz = midiToHz(snapped)
         this.followGate = true
       }
     } else if (this.followGate) {
@@ -372,10 +415,28 @@ export class MvoxEngineCore {
   private followOscPhase = 0
   private followOsc(hz: number): number {
     if (hz <= 0) return 0
-    this.followOscPhase += hz / this.sampleRate
+    const dt = hz / this.sampleRate
+    this.followOscPhase += dt
     if (this.followOscPhase >= 1) this.followOscPhase -= 1
-    // Simple saw; the FX tail + master smoothing tame aliasing at this stage.
-    return (2 * this.followOscPhase - 1) * 0.5
+    const t = this.followOscPhase
+    // Honor the selected follow waveform (patch.follow.wave), polyBLEP-corrected
+    // so high notes don't alias — same scheme as CarrierSynth's oscillators.
+    switch (this.patch.follow.wave) {
+      case 'pulse': {
+        let s = t < 0.5 ? 1 : -1
+        s += polyBlep(t, dt)
+        s -= polyBlep((t + 0.5) % 1, dt)
+        return s * 0.5
+      }
+      case 'noise':
+        return this.noise() * 0.5
+      case 'saw':
+      default: {
+        let s = 2 * t - 1
+        s -= polyBlep(t, dt)
+        return s * 0.5
+      }
+    }
   }
 }
 

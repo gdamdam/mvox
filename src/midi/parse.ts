@@ -48,14 +48,20 @@ export function parseMidi(data: Uint8Array | number[]): MidiEvent {
 
   switch (type) {
     case NOTE_ON: {
-      const note = (data[1] ?? 0) & 0x7f
-      const velocity = ((data[2] ?? 0) & 0x7f) / 127
+      // Note On carries status + note + velocity; a truncated message is not
+      // decodable and must not fabricate a note-off that kills a held note.
+      if (data.length < 3) return { type: 'other' }
+      const note = data[1] & 0x7f
+      const velocity = (data[2] & 0x7f) / 127
       // A Note On at zero velocity is the idiomatic Note Off.
       if (velocity === 0) return { type: 'noteoff', note }
       return { type: 'noteon', note, velocity }
     }
     case NOTE_OFF: {
-      const note = (data[1] ?? 0) & 0x7f
+      // Note Off carries status + note + release velocity; the release byte is
+      // discarded but a truncated message is still undecodable.
+      if (data.length < 3) return { type: 'other' }
+      const note = data[1] & 0x7f
       return { type: 'noteoff', note }
     }
     default:

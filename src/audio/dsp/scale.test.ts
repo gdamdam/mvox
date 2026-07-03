@@ -112,6 +112,17 @@ describe('diatonicHarmony', () => {
   it('chromatic treats one degree as one semitone', () => {
     expect(diatonicHarmony(60, 0, 'chromatic', 3)).toBe(63)
   })
+  it('+2 degrees from A4(69) in A major → C#5(73), crossing the pc wrap', () => {
+    // A major pcs=[9,11,1,2,4,6,8] wraps 11->1 mid-scale; the interval must
+    // stay ascending (+4 semitones), not drop an octave.
+    expect(diatonicHarmony(69, 9, 'major', 2)).toBe(73)
+  })
+  it('+1 degree from F#4(66) in G major → G4(67), crossing the octave wrap', () => {
+    expect(diatonicHarmony(66, 7, 'major', 1)).toBe(67)
+  })
+  it('-1 degree from A4(69) in A major → G#4(68), descending across the wrap', () => {
+    expect(diatonicHarmony(69, 9, 'major', -1)).toBe(68)
+  })
 })
 
 describe('hz / midi / cents', () => {

@@ -173,9 +173,13 @@ export function diatonicHarmony(
   const octaveShift = Math.floor(targetIdx / n)
   const wrappedIdx = ((targetIdx % n) + n) % n
 
-  // Semitone distance within the scale, from start degree to target degree,
-  // ignoring octaves; the octaveShift term re-adds the crossed octaves.
-  const semitoneDelta = pcs[wrappedIdx] - pcs[startIdx] + octaveShift * 12
+  // Distance from start degree to target degree. Use the tonic-relative
+  // semitone table (monotonic 0..11 within an octave) rather than mod-12 pitch
+  // classes: pcs wraps at 12 mid-scale in most keys (e.g. A major …11,1…), so
+  // pcs[target]-pcs[start] silently drops an octave whenever the scale crosses
+  // C. The octaveShift term re-adds the octaves the wrappedIdx dropped.
+  const semis = scaleSemitones(mode)
+  const semitoneDelta = semis[wrappedIdx] - semis[startIdx] + octaveShift * 12
   return snapped + semitoneDelta
 }
 

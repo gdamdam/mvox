@@ -30,6 +30,9 @@ type StatusListener = (status: EngineStatus, error?: string) => void
 
 const START_TIMEOUT_MS = 5000
 
+/** Cap on a single capture so the unbounded chunk buffer can't exhaust memory. */
+export const MAX_RECORD_SECONDS = 600
+
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return Promise.race([
     promise,
@@ -46,6 +49,9 @@ export class AudioEngine {
   private recording = false
   private recChunks: RecordChunk[] = []
   private recSampleRate = 48000
+  private recTotalSamples = 0
+  private recCapped = false
+  private recStopResolve: (() => void) | null = null
   private micStream: MediaStream | null = null
   private micSource: MediaStreamAudioSourceNode | null = null
   private startPromise: Promise<void> | null = null
@@ -77,6 +83,12 @@ export class AudioEngine {
 
   /** Start (or resume) audio. Must be called from a user gesture. Idempotent. */
   start(): Promise<void> {
+    // The OS/browser can suspend a running context out from under us (iOS
+    // interruption, Safari tab restore). A fresh user gesture must resume it —
+    // otherwise the cached resolved startPromise reports running while silent.
+    if (this.status === 'running' && this.context?.state === 'suspended') {
+      return this.context.resume()
+    }
     this.startPromise ??= this.runStart().catch((err: unknown) => {
       this.startPromise = null
       const message = err instanceof Error ? err.message : 'Audio failed to start.'
@@ -92,78 +104,114 @@ export class AudioEngine {
     const context = new AudioContext({ latencyHint: 'interactive' })
     this.context = context
 
-    await withTimeout(
-      context.audioWorklet.addModule(mvoxWorkletUrl),
-      START_TIMEOUT_MS,
-      'Timed out loading the audio engine.',
-    )
-    await withTimeout(context.resume(), START_TIMEOUT_MS, 'Timed out starting audio.')
+    try {
+      await withTimeout(
+        context.audioWorklet.addModule(mvoxWorkletUrl),
+        START_TIMEOUT_MS,
+        'Timed out loading the audio engine.',
+      )
+      // dispose() (e.g. React StrictMode unmount) nulls/replaces this.context; if
+      // it fired while we were awaiting, bail before touching the dead context.
+      if (this.context !== context) return
+      await withTimeout(context.resume(), START_TIMEOUT_MS, 'Timed out starting audio.')
+      if (this.context !== context) return
 
-    const node = new AudioWorkletNode(context, WORKLET_PROCESSOR_NAME, {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [2],
-      channelCount: 1,
-      channelCountMode: 'explicit',
-    })
-    node.port.onmessage = (event: MessageEvent<WorkletToMainMessage>) => {
-      const msg = event.data
-      if (msg.type === 'telemetry') {
-        for (const fn of this.telemetryListeners) fn(msg)
+      const node = new AudioWorkletNode(context, WORKLET_PROCESSOR_NAME, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        channelCount: 1,
+        channelCountMode: 'explicit',
+      })
+      node.port.onmessage = (event: MessageEvent<WorkletToMainMessage>) => {
+        const msg = event.data
+        if (msg.type === 'telemetry') {
+          for (const fn of this.telemetryListeners) fn(msg)
+        }
       }
-    }
 
-    const master = context.createGain()
-    master.gain.value = 0.85
-    const limiter = context.createDynamicsCompressor()
-    limiter.threshold.value = -3
-    limiter.knee.value = 0
-    limiter.ratio.value = 20
-    limiter.attack.value = 0.003
-    limiter.release.value = 0.1
+      const master = context.createGain()
+      master.gain.value = 0.85
+      const limiter = context.createDynamicsCompressor()
+      limiter.threshold.value = -3
+      limiter.knee.value = 0
+      limiter.ratio.value = 20
+      limiter.attack.value = 0.003
+      limiter.release.value = 0.1
 
-    // Recorder tap sits at the end of the chain (post-limiter) so captures match
-    // what's heard. It passes audio through unchanged; capture is opt-in.
-    await withTimeout(
-      context.audioWorklet.addModule(recorderWorkletUrl),
-      START_TIMEOUT_MS,
-      'Timed out loading the recorder.',
-    )
-    const recorder = new AudioWorkletNode(context, 'mvox-recorder', {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [2],
-      channelCount: 2,
-      channelCountMode: 'explicit',
-    })
-    recorder.port.onmessage = (event: MessageEvent) => {
-      const msg = event.data as
-        | { type: 'chunk'; left: Float32Array; right: Float32Array }
-        | { type: 'started'; sampleRate: number }
-      if (msg.type === 'chunk') {
-        if (this.recording) this.recChunks.push({ left: msg.left, right: msg.right })
-      } else if (msg.type === 'started') {
-        this.recSampleRate = msg.sampleRate
+      // Recorder tap sits at the end of the chain (post-limiter) so captures match
+      // what's heard. It passes audio through unchanged; capture is opt-in.
+      await withTimeout(
+        context.audioWorklet.addModule(recorderWorkletUrl),
+        START_TIMEOUT_MS,
+        'Timed out loading the recorder.',
+      )
+      if (this.context !== context) return
+      const recorder = new AudioWorkletNode(context, 'mvox-recorder', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        channelCount: 2,
+        channelCountMode: 'explicit',
+      })
+      recorder.port.onmessage = (event: MessageEvent) => {
+        const msg = event.data as
+          | { type: 'chunk'; left: Float32Array; right: Float32Array }
+          | { type: 'started'; sampleRate: number }
+          | { type: 'stopped' }
+        if (msg.type === 'chunk') {
+          // Accept chunks while armed and during the stop handshake (recStopResolve
+          // set), so the tail quanta flushed before 'stopped' aren't dropped.
+          if ((this.recording && !this.recCapped) || this.recStopResolve) {
+            this.recChunks.push({ left: msg.left, right: msg.right })
+            this.recTotalSamples += msg.left.length
+            // Cap the capture: stop the worklet tap but keep the buffered audio so
+            // a later stopRecording() still returns the (capped) WAV.
+            if (
+              this.recording &&
+              !this.recCapped &&
+              this.recTotalSamples >= MAX_RECORD_SECONDS * this.recSampleRate
+            ) {
+              this.recCapped = true
+              this.recorderNode?.port.postMessage({ type: 'stop' })
+            }
+          }
+        } else if (msg.type === 'started') {
+          this.recSampleRate = msg.sampleRate
+        } else if (msg.type === 'stopped') {
+          const resolve = this.recStopResolve
+          this.recStopResolve = null
+          resolve?.()
+        }
       }
+
+      node.connect(master)
+      master.connect(limiter)
+      limiter.connect(recorder)
+      recorder.connect(context.destination)
+
+      this.node = node
+      this.master = master
+      this.limiter = limiter
+      this.recorderNode = recorder
+
+      // Seed the worklet with a demo voice so the instrument is playable with no
+      // mic permission, plus the current patch.
+      const demo = makeDemoVoice(context.sampleRate)
+      this.post({ type: 'set-voice-sample', channel: demo }, [demo.buffer])
+      this.post({ type: 'set-patch', patch: this.patch })
+
+      this.setStatus('running')
+    } catch (err) {
+      // Failed/timed-out start leaks a live AudioContext unless closed; browsers
+      // cap concurrent contexts, so retries would eventually fail permanently (H5).
+      if (context.state !== 'closed') void context.close()
+      // Superseded by dispose()/restart mid-start: that path owns cleanup and the
+      // idle status, so swallow rather than resurrect an 'error' status (M12).
+      if (this.context !== context) return
+      this.context = null
+      throw err
     }
-
-    node.connect(master)
-    master.connect(limiter)
-    limiter.connect(recorder)
-    recorder.connect(context.destination)
-
-    this.node = node
-    this.master = master
-    this.limiter = limiter
-    this.recorderNode = recorder
-
-    // Seed the worklet with a demo voice so the instrument is playable with no
-    // mic permission, plus the current patch.
-    const demo = makeDemoVoice(context.sampleRate)
-    this.post({ type: 'set-voice-sample', channel: demo }, [demo.buffer])
-    this.post({ type: 'set-patch', patch: this.patch })
-
-    this.setStatus('running')
   }
 
   private post(message: MainToWorkletMessage, transfer?: Transferable[]): void {
@@ -201,15 +249,24 @@ export class AudioEngine {
    */
   async enableMic(): Promise<boolean> {
     if (!this.context || !this.node) return false
+    // Already active: a second enable would overwrite micStream/micSource and leak
+    // the first source (still connected, tracks never stopped) (H4).
+    if (this.micStream) return true
     const generation = ++this.liveInputGeneration
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: { ideal: 1 },
-      },
-    })
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: { ideal: 1 },
+        },
+      })
+    } catch {
+      // Permission denied / no device: honour the boolean contract, leave no state (M7).
+      return false
+    }
     // A newer enable/disable call superseded this one while awaiting permission.
     if (generation !== this.liveInputGeneration) {
       for (const track of stream.getTracks()) track.stop()
@@ -250,18 +307,38 @@ export class AudioEngine {
     return this.recording
   }
 
+  /** True once a capture hit MAX_RECORD_SECONDS and auto-stopped (buffer preserved). */
+  get recordingLimitReached(): boolean {
+    return this.recCapped
+  }
+
   startRecording(): void {
     if (!this.recorderNode || this.recording) return
     this.recChunks = []
+    this.recTotalSamples = 0
+    this.recCapped = false
     this.recording = true
     this.recorderNode.port.postMessage({ type: 'start' })
   }
 
   /** Stop recording and return the capture as a 16-bit WAV Blob (null if empty). */
-  stopRecording(): Blob | null {
+  async stopRecording(): Promise<Blob | null> {
     if (!this.recorderNode || !this.recording) return null
     this.recording = false
-    this.recorderNode.port.postMessage({ type: 'stop' })
+    // Handshake: wait for the worklet's 'stopped' ack so chunks still queued on
+    // the MessagePort are appended before we assemble — otherwise the final render
+    // quanta are dropped by the chunk gate (M9). Timeout so a closed/dead context
+    // can't hang the caller; we still assemble whatever arrived.
+    await withTimeout(
+      new Promise<void>((resolve) => {
+        this.recStopResolve = resolve
+        this.recorderNode?.port.postMessage({ type: 'stop' })
+      }),
+      START_TIMEOUT_MS,
+      'Timed out stopping the recorder.',
+    ).catch(() => {
+      this.recStopResolve = null
+    })
     if (this.recChunks.length === 0) return null
 
     let total = 0
@@ -286,12 +363,31 @@ export class AudioEngine {
     this.master?.disconnect()
     this.limiter?.disconnect()
     this.recorderNode?.disconnect()
-    this.telemetryListeners.clear()
-    this.statusListeners.clear()
-    await this.context?.close()
+
+    const context = this.context
+    // Null the context synchronously (before awaiting close) so an in-flight
+    // runStart bails at its next await instead of building on a dead context (M12).
     this.context = null
     this.node = null
+    this.master = null
+    this.limiter = null
+    this.recorderNode = null
+    this.recording = false
+    this.recChunks = []
+    this.recSampleRate = 48000
+    this.recTotalSamples = 0
+    this.recCapped = false
+    // Unblock any pending stopRecording() handshake so its promise can't hang.
+    const stopResolve = this.recStopResolve
+    this.recStopResolve = null
+    stopResolve?.()
     this.startPromise = null
+
+    // Emit idle BEFORE clearing listeners so subscribers observe the transition (M8).
     this.setStatus('idle')
+    this.telemetryListeners.clear()
+    this.statusListeners.clear()
+
+    await context?.close()
   }
 }

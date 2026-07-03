@@ -69,10 +69,13 @@ export function useEngine() {
   }, [])
 
   const enableMic = useCallback(async () => {
+    // Already on: a second tap must not re-invoke enable (avoids a redundant
+    // getUserMedia / graph rebuild) and must keep the UI toggle consistent.
+    if (micOn) return true
     const ok = (await engineRef.current?.enableMic()) ?? false
     setMicOn(ok)
     return ok
-  }, [])
+  }, [micOn])
 
   const disableMic = useCallback(() => {
     engineRef.current?.disableMic()
@@ -84,8 +87,8 @@ export function useEngine() {
     setRecording(true)
   }, [])
 
-  const stopRecording = useCallback((): Blob | null => {
-    const blob = engineRef.current?.stopRecording() ?? null
+  const stopRecording = useCallback(async (): Promise<Blob | null> => {
+    const blob = (await engineRef.current?.stopRecording()) ?? null
     setRecording(false)
     return blob
   }, [])

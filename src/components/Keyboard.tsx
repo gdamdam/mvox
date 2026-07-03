@@ -36,23 +36,29 @@ export function Keyboard({ octave, activeNotes, onNoteOn, onNoteOff }: KeyboardP
             <button
               type="button"
               className={`keys__white ${activeNotes.has(midi) ? 'keys__key--on' : ''}`}
-              onPointerDown={() => onNoteOn(midi, 0.8)}
+              onPointerDown={(e) => {
+                // Ignore non-primary buttons (e.g. right-click): the context menu
+                // swallows pointerup/leave, otherwise leaving the note stuck on.
+                if (e.button === 0) onNoteOn(midi, 0.8)
+              }}
               onPointerUp={() => onNoteOff(midi)}
               onPointerLeave={(e) => {
                 if (e.buttons > 0) onNoteOff(midi)
               }}
+              onPointerCancel={() => onNoteOff(midi)}
             >
               {semi < 12 && SEMITONE_TO_KEY.has(semi) ? (
                 <span className="keys__hint">{SEMITONE_TO_KEY.get(semi)}</span>
               ) : null}
             </button>
-            {BLACK[(semi + 1) % 12] && WHITE.includes(semi % 12) ? (
+            {BLACK[(semi + 1) % 12] && WHITE.includes(semi % 12) && midi + 1 <= 127 ? (
               <button
                 type="button"
                 className={`keys__black ${activeNotes.has(midi + 1) ? 'keys__key--on' : ''}`}
                 onPointerDown={(e) => {
                   e.stopPropagation()
-                  onNoteOn(midi + 1, 0.8)
+                  // Ignore non-primary buttons (see white key above).
+                  if (e.button === 0) onNoteOn(midi + 1, 0.8)
                 }}
                 onPointerUp={(e) => {
                   e.stopPropagation()
@@ -60,6 +66,10 @@ export function Keyboard({ octave, activeNotes, onNoteOn, onNoteOff }: KeyboardP
                 }}
                 onPointerLeave={(e) => {
                   if (e.buttons > 0) onNoteOff(midi + 1)
+                }}
+                onPointerCancel={(e) => {
+                  e.stopPropagation()
+                  onNoteOff(midi + 1)
                 }}
               >
                 {semi + 1 < 12 && SEMITONE_TO_KEY.has(semi + 1) ? (

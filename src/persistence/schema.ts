@@ -40,7 +40,13 @@ export function importPatchJSON(text: string): MvoxPatch | null {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return null;
   }
-  return migratePatch(parsed);
+  // migratePatch throws on a future-version patch (see there); honor this
+  // function's "never throws" contract by surfacing that as null too.
+  try {
+    return migratePatch(parsed);
+  } catch {
+    return null;
+  }
 }
 
 // Forward-migrate a raw stored value to the current patch shape, then sanitize.
@@ -55,12 +61,21 @@ export function migratePatch(raw: unknown): MvoxPatch {
       ? (raw as { version: number }).version
       : 0;
 
+  // Refuse data from a newer client than we understand. Sanitizing field-by-field
+  // would drop unknown (future) fields and restamp the version down to ours, so
+  // re-saving would silently and permanently strip the newer preset. Fail loud
+  // instead; callers that tolerate bad input (importPatchJSON) catch this.
+  if (version > PATCH_VERSION) {
+    throw new Error(
+      `mvox: patch version ${version} is newer than supported version ${PATCH_VERSION}; refusing to downgrade`,
+    );
+  }
+
   const working = raw;
 
   // Migration ladder: each step upgrades one version to the next. Left empty for
   // now (v1 is current); add `if (version < N) working = stepToN(working)` here.
   void version;
-  void PATCH_VERSION;
 
   // Final pass fills defaults, clamps ranges, and stamps the current version.
   return sanitizePatch(working);

@@ -139,6 +139,15 @@ export function XYPad({ x, y, xLabel, yLabel, onChange }: XYPadProps) {
         dragging.current = false
         e.currentTarget.releasePointerCapture(e.pointerId)
       }}
+      onPointerCancel={(e) => {
+        // Touch cancel (e.g. gesture takeover) never fires pointerup; clear
+        // drag so hover pointermove doesn't keep changing X/Y.
+        dragging.current = false
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      }}
+      onLostPointerCapture={() => {
+        dragging.current = false
+      }}
     >
       <div className="xypad__grid" />
       <div className="xypad__dot" style={{ left: `${x * 100}%`, top: `${(1 - y) * 100}%` }} />

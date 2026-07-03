@@ -75,6 +75,20 @@ describe('yinDetect', () => {
     }
   });
 
+  it('detects high sine tones near maxHz without octave-halving', () => {
+    // Regression: cumulative-mean normalization used to sum only over d(tauMin..tau),
+    // inflating the dip near tauMin so tones in the top of the range locked onto
+    // twice the period (half the frequency) with full confidence.
+    for (const f of [940, 985, 1000]) {
+      const r = yinDetect(synthSine(f, SR, 2048), SR, { maxHz: 1000 });
+      expectFiniteBounded(r);
+      expectWithinPercent(r.f0, f, 1);
+      expect(r.confidence).toBeGreaterThan(0.8);
+      // Must NOT report the sub-octave.
+      expect(Math.abs(r.f0 - f / 2)).toBeGreaterThan(f * 0.1);
+    }
+  });
+
   it('detects harmonic-rich sawtooth at 220 Hz without octave error', () => {
     const r = yinDetect(synthSaw(220, SR, 2048), SR);
     expectFiniteBounded(r);
@@ -167,6 +181,27 @@ describe('PitchTracker', () => {
 
     const fresh = new PitchTracker(SR).process(buf);
     expect(afterReset).toEqual(fresh);
+  });
+
+  it('holds the last voiced estimate through a brief unvoiced gap', () => {
+    // No overlap so each block maps cleanly to one frame with no leftover.
+    const tracker = new PitchTracker(SR, { frameSize: 1024, hopSize: 1024 });
+    const voiced = tracker.process(synthSine(220, SR, 1024));
+    expect(voiced.f0).toBeGreaterThan(0);
+    expectWithinPercent(voiced.f0, 220, 5);
+
+    // A single unvoiced (silent) frame must not immediately drop the pitch.
+    const held = tracker.process(new Float32Array(1024));
+    expect(held).toEqual(voiced);
+  });
+
+  it('clears to unvoiced after a sustained unvoiced gap', () => {
+    const tracker = new PitchTracker(SR, { frameSize: 1024, hopSize: 1024 });
+    tracker.process(synthSine(220, SR, 1024));
+    // Well past the brief-hold window.
+    let r: PitchResult = { f0: -1, confidence: -1 };
+    for (let i = 0; i < 10; i++) r = tracker.process(new Float32Array(1024));
+    expect(r).toEqual({ f0: 0, confidence: 0 });
   });
 
   it('returns unvoiced before a full frame is buffered', () => {

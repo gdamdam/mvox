@@ -70,6 +70,45 @@ describe('codec', () => {
     expect(patchFromUrl('')).toBeNull()
   })
 
+  it('round-trips non-ASCII names through a full share URL', () => {
+    const unicode: MvoxPatch = { ...DEFAULT_PATCH, name: '日本語 🎹 café — ✨' }
+    const url = patchToShareUrl(unicode, 'https://mvox.app/')
+    expect(patchFromUrl(url)).toEqual(sanitizePatch(unicode))
+  })
+
+  it('emits a version-marked, URL-safe payload (no +, /, = or %-escaping)', () => {
+    const payload = encodePatch(DEFAULT_PATCH)
+    expect(payload.startsWith(`${COMPACT_VERSION}.`)).toBe(true)
+    // base64url + version marker must survive a URL fragment untouched.
+    expect(payload).not.toMatch(/[+/=]/)
+    expect(encodeURIComponent(payload)).toBe(payload)
+  })
+
+  it('rejects a payload marked with an unknown wire-format version', () => {
+    const body = encodePatch(DEFAULT_PATCH).split('.')[1]
+    expect(decodePatch(`2.${body}`)).toBeNull()
+    expect(decodePatch(`${COMPACT_VERSION}.${body}`)).toEqual(sanitizePatch(DEFAULT_PATCH))
+  })
+
+  it('decodes legacy old-alphabet (unmarked) links containing +//=', () => {
+    // '>>>' forces a '+' into standard base64 — the exact char an intermediary mangles.
+    const legacyPatch: MvoxPatch = { ...DEFAULT_PATCH, name: 'mvox>>>' }
+    const legacy = toPayload(legacyPatch) // standard alphabet, padded, no version marker
+    expect(legacy).toMatch(/[+/=]/)
+    expect(decodePatch(legacy)).toEqual(sanitizePatch(legacyPatch))
+  })
+
+  it('decodes a fragment an intermediary percent-encoded (legacy +//=)', () => {
+    const legacyPatch: MvoxPatch = { ...DEFAULT_PATCH, name: 'mvox>>>' }
+    const legacy = toPayload(legacyPatch)
+    // Simulate any hop that percent-escapes the fragment value: +→%2B, /→%2F, =→%3D.
+    const escaped = encodeURIComponent(legacy)
+    expect(escaped).not.toBe(legacy)
+    expect(decodePatch(escaped)).toEqual(sanitizePatch(legacyPatch))
+    // And through the hash-parsing path.
+    expect(patchFromUrl(`#${FRAGMENT_KEY}=${escaped}`)).toEqual(sanitizePatch(legacyPatch))
+  })
+
   it('clamps a tampered payload with out-of-range values', () => {
     // Hand-forge a link claiming absurd values; sanitize must clamp them.
     const tampered = toPayload({

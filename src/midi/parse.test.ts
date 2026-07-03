@@ -36,6 +36,15 @@ describe('parseMidi', () => {
     expect(parseMidi([60, 100]).type).toBe('other')
   })
 
+  it('maps a truncated Note On to other (no fabricated note-off)', () => {
+    // Missing velocity byte must not decode to noteoff via a ?? 0 default,
+    // which would kill a legitimately held note.
+    expect(parseMidi([0x90, 60]).type).toBe('other')
+    expect(parseMidi([0x90]).type).toBe('other')
+    // A complete Note On still parses.
+    expect(parseMidi([0x90, 60, 100]).type).toBe('noteon')
+  })
+
   it('ignores channel bits (0x95 is still a Note On on channel 5)', () => {
     const e = parseMidi([0x95, 64, 80])
     expect(e.type).toBe('noteon')

@@ -1,9 +1,16 @@
-// Bump these whenever the caching strategy changes; activate() purges older caches.
-const SHELL_CACHE = 'mvox-shell-v1'
-// Runtime cache is size-capped: hashed bundles from past deploys would otherwise
-// accumulate here forever (sw.js never changes between deploys, so the cache name
-// alone can't evict them). Trimming to a fixed budget bounds disk usage.
-const RUNTIME_CACHE = 'mvox-runtime-v1'
+// Build-time token: the Vite precache plugin string-replaces __SW_VERSION__ with a
+// hash of this build's hashed-asset list, so sw.js bytes change on every deploy that
+// alters a chunk. That is what makes the browser reinstall the worker and re-run
+// precache() post-deploy; without it install() fires only once, ever, and newly
+// hashed chunks (e.g. the audio worklet, fetched only on start) never get cached.
+// In dev the literal token is used verbatim, which is a fine static cache name.
+const SW_VERSION = '__SW_VERSION__'
+// Versioned cache names: activate() deletes any cache not matching the current
+// names, so the prior deploy's shell/runtime caches are purged on activation.
+const SHELL_CACHE = `mvox-shell-${SW_VERSION}`
+// Runtime cache is additionally size-capped: within a single version, hashed bundles
+// from many navigations can accumulate; trimming to a fixed budget bounds disk usage.
+const RUNTIME_CACHE = `mvox-runtime-${SW_VERSION}`
 const RUNTIME_MAX_ENTRIES = 64
 const APP_BASE = new URL('./', self.location.href).pathname
 const SHELL_URLS = [APP_BASE, `${APP_BASE}manifest.webmanifest`, `${APP_BASE}mvox-mark.svg`]
@@ -74,9 +81,12 @@ self.addEventListener('fetch', (event) => {
         .then((response) => {
           if (response.ok) {
             // Attach the cache refresh to the event so it isn't cut short if the
-            // worker is stopped right after the response is delivered.
+            // worker is stopped right after the response is delivered. Key on APP_BASE
+            // (not request.url) so query'd navigations don't each spawn a distinct,
+            // never-trimmed shell entry; there is exactly one shell copy, always the
+            // freshest, which is also the entry the offline fallback below reads.
             const copy = response.clone()
-            event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy)))
+            event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.put(APP_BASE, copy)))
           }
           return response
         })

@@ -52,6 +52,9 @@ export function useKeyboard({ onNoteOn, onNoteOff, enabled }: KeyboardHandlers) 
 
     function down(e: KeyboardEvent) {
       if (!enabledRef.current || e.repeat || isEditableTarget(e.target)) return
+      // Ignore modifier combos (Cmd/Ctrl/Alt shortcuts). Playing a note here
+      // would strand it: macOS suppresses keyup for letters while Meta is held.
+      if (e.metaKey || e.ctrlKey || e.altKey) return
       const code = e.code
       if (code === OCTAVE_DOWN_CODE) {
         setOctave((o) => clampOctave(o - 1))

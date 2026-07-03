@@ -22,6 +22,7 @@ export type RecorderCommand = { type: 'start' } | { type: 'stop' }
 export type RecorderMessage =
   | { type: 'chunk'; left: Float32Array; right: Float32Array }
   | { type: 'started'; sampleRate: number }
+  | { type: 'stopped' }
 
 class RecorderProcessor extends AudioWorkletProcessor {
   private recording = false
@@ -33,7 +34,11 @@ class RecorderProcessor extends AudioWorkletProcessor {
         this.recording = true
         this.port.postMessage({ type: 'started', sampleRate })
       } else {
+        // Stop-ack handshake: message-port ordering guarantees every chunk we
+        // already posted this session precedes 'stopped', so the main thread can
+        // wait for it and assemble without dropping the final render quanta.
         this.recording = false
+        this.port.postMessage({ type: 'stopped' })
       }
     }
   }

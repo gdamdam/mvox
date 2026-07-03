@@ -38,10 +38,18 @@ export default function App() {
   const engine = useEngine()
   const [patch, setPatchState] = useState<MvoxPatch>(initialPatch)
   const [tempo, setTempo] = useState(120)
+  // Editable BPM text kept separate from the committed numeric tempo so an empty
+  // or mid-edit field isn't snapped to a fallback while typing (L8).
+  const [tempoText, setTempoText] = useState(String(tempo))
   const [activeNotes, setActiveNotes] = useState<Set<number>>(() => new Set())
   const [showMicWarn, setShowMicWarn] = useState(false)
+  const [micDenied, setMicDenied] = useState(false)
   const [midiOn, setMidiOn] = useState(false)
   const midiRef = useRef<MidiRouter | null>(null)
+  // Guards a MIDI toggle whose init() is still awaiting so two quick taps can't
+  // both register a note subscriber (M5); the unsubscribe is kept to release it.
+  const midiInFlight = useRef(false)
+  const midiUnsub = useRef<(() => void) | null>(null)
 
   const update = useCallback((mut: (p: MvoxPatch) => void) => {
     setPatchState((prev) => {
@@ -55,13 +63,35 @@ export default function App() {
   const effective = useMemo(() => applyPerformance(patch), [patch])
 
   // Push the effective patch to the engine whenever it changes and audio runs.
+  // Destructure the stable engine methods (not the engine object, whose identity
+  // changes every render as telemetry re-renders fire) so these effects re-run
+  // only when effective/tempo actually change — not ~60x/sec while running.
+  const { status: engineStatus, setPatch: engineSetPatch, setTempo: engineSetTempo } = engine
   useEffect(() => {
-    if (engine.status === 'running') engine.setPatch(effective)
-  }, [effective, engine.status, engine])
+    if (engineStatus === 'running') engineSetPatch(effective)
+  }, [effective, engineStatus, engineSetPatch])
 
   useEffect(() => {
-    if (engine.status === 'running') engine.setTempo(tempo)
-  }, [tempo, engine.status, engine])
+    if (engineStatus === 'running') engineSetTempo(tempo)
+  }, [tempo, engineStatus, engineSetTempo])
+
+  // Mirror committed tempo into the edit field (e.g. after a preset load resets
+  // it) without clobbering what the user is mid-typing — tempo only changes on
+  // commit, so this only re-syncs when the committed value actually changes.
+  // Adjust-state-during-render (React's endorsed pattern) rather than an effect,
+  // so it commits before paint with no cascading render.
+  const [lastTempo, setLastTempo] = useState(tempo)
+  if (tempo !== lastTempo) {
+    setLastTempo(tempo)
+    setTempoText(String(tempo))
+  }
+
+  const commitTempo = useCallback(() => {
+    const n = Math.round(Number(tempoText))
+    const next = Number.isFinite(n) && n > 0 ? Math.min(300, Math.max(40, n)) : tempo
+    setTempo(next)
+    setTempoText(String(next))
+  }, [tempoText, tempo])
 
   // Note handlers shared by computer keys, MIDI, and the on-screen keyboard.
   const noteOn = useCallback(
@@ -91,37 +121,57 @@ export default function App() {
   }, [engine])
 
   const toggleMidi = useCallback(async () => {
-    if (!midiRef.current) midiRef.current = new MidiRouter()
-    const router = midiRef.current
+    if (midiInFlight.current) return
     if (midiOn) {
-      router.dispose()
+      // dispose() synthesizes note-offs for held notes to our still-subscribed
+      // onNote callback (M6) and clears its subscribers, so just null out the
+      // dead router — the next enable builds a fresh one (M4).
+      midiRef.current?.dispose()
+      midiRef.current = null
+      midiUnsub.current = null
       setMidiOn(false)
       return
     }
-    const ok = await router.init()
-    if (!ok) return
-    router.onNote((e) => {
-      if (e.type === 'noteon') noteOn(e.note, e.velocity)
-      else if (e.type === 'noteoff') noteOff(e.note)
-    })
-    setMidiOn(true)
+    midiInFlight.current = true
+    try {
+      // A fresh router each enable: a disposed router's init() is a no-op (M4).
+      const router = new MidiRouter()
+      const ok = await router.init()
+      if (!ok) {
+        router.dispose()
+        return
+      }
+      midiRef.current = router
+      midiUnsub.current = router.onNote((e) => {
+        if (e.type === 'noteon') noteOn(e.note, e.velocity)
+        else if (e.type === 'noteoff') noteOff(e.note)
+      })
+      setMidiOn(true)
+    } finally {
+      midiInFlight.current = false
+    }
   }, [midiOn, noteOn, noteOff])
 
   const confirmMic = useCallback(async () => {
     setShowMicWarn(false)
-    await engine.enableMic()
+    // enableMic returns false when getUserMedia is denied/unavailable; leave the
+    // toggle off (useEngine keeps micOn false) and surface why to the user (M7).
+    const ok = await engine.enableMic()
+    setMicDenied(!ok)
   }, [engine])
 
-  const record = useCallback(() => {
+  const record = useCallback(async () => {
     if (engine.recording) {
-      const blob = engine.stopRecording()
+      const blob = await engine.stopRecording()
       if (blob) {
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
         a.download = `mvox-${Date.now()}.wav`
         a.click()
-        URL.revokeObjectURL(url)
+        // Revoking synchronously after click() can abort the download in Firefox;
+        // defer so the browser has committed to the blob first (L9).
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
       }
     } else {
       engine.startRecording()
@@ -149,6 +199,9 @@ export default function App() {
       </header>
 
       {engine.error ? <div className="app__error">{engine.error}</div> : null}
+      {micDenied ? (
+        <div className="app__error">Mic access was blocked — check your browser's microphone permission.</div>
+      ) : null}
 
       <div className="transport">
         {!running ? (
@@ -160,7 +213,7 @@ export default function App() {
             <button
               type="button"
               className={`btn ${engine.micOn ? 'btn--on' : ''}`}
-              onClick={() => (engine.micOn ? engine.disableMic() : setShowMicWarn(true))}
+              onClick={() => (engine.micOn ? engine.disableMic() : (setMicDenied(false), setShowMicWarn(true)))}
             >
               {engine.micOn ? '🎤 Mic on' : '🎤 Enable mic'}
             </button>
@@ -176,7 +229,17 @@ export default function App() {
             </button>
             <label className="transport__tempo">
               BPM
-              <input type="number" min={40} max={300} value={tempo} onChange={(e) => setTempo(Number(e.target.value) || 120)} />
+              <input
+                type="number"
+                min={40}
+                max={300}
+                value={tempoText}
+                onChange={(e) => setTempoText(e.target.value)}
+                onBlur={commitTempo}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitTempo()
+                }}
+              />
             </label>
           </>
         )}

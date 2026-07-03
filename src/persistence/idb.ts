@@ -33,15 +33,33 @@ function openDB(): Promise<IDBDatabase> {
       return;
     }
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+    // Track settlement: onblocked/onerror reject, but the underlying open can
+    // still succeed later (e.g. once the blocking tab closes). If we resolved
+    // that late success we'd hand out a rejected promise's DB; if we ignored it
+    // we'd leak an open connection that blocks all future version upgrades.
+    let settled = false;
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "id" });
       }
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error("indexedDB open failed"));
-    req.onblocked = () => reject(new Error("indexedDB blocked"));
+    req.onsuccess = () => {
+      if (settled) {
+        // Promise already rejected — close the now-orphaned connection.
+        req.result.close();
+        return;
+      }
+      resolve(req.result);
+    };
+    req.onerror = () => {
+      settled = true;
+      reject(req.error ?? new Error("indexedDB open failed"));
+    };
+    req.onblocked = () => {
+      settled = true;
+      reject(new Error("indexedDB blocked"));
+    };
   });
 }
 
@@ -57,7 +75,17 @@ function withStore<T>(
         const tx = db.transaction(STORE, mode);
         const store = tx.objectStore(STORE);
         let result: T | undefined;
-        const req = fn(store);
+        let req: IDBRequest<T> | null;
+        try {
+          req = fn(store);
+        } catch (err) {
+          // A synchronous throw from fn (e.g. DataCloneError from store.put on a
+          // non-cloneable value) would otherwise skip every db.close() below and
+          // leak the open connection.
+          db.close();
+          reject(err);
+          return;
+        }
         if (req) req.onsuccess = () => (result = req.result);
         tx.oncomplete = () => {
           db.close();
@@ -102,12 +130,21 @@ export async function idbListPresets(): Promise<UserPreset[]> {
       store.getAll(),
     );
     if (!Array.isArray(rows)) return [];
-    return rows.map((row) => ({
-      id: String(row?.id ?? ""),
-      name: typeof row?.name === "string" ? row.name : "Preset",
-      createdAt: typeof row?.createdAt === "number" ? row.createdAt : 0,
-      patch: migratePatch(row?.patch),
-    }));
+    // The store's keyPath is "id", so a row's key IS its `id`. Coercing a numeric
+    // (or otherwise non-string) key to a string would list a preset under an id
+    // that idbDeletePreset(id: string) can never match — an undeletable ghost
+    // that reappears on every load. Skip such rows: the app only ever writes
+    // string ids (randomId), so these are foreign/corrupt records we shouldn't
+    // surface. This also avoids collapsing several bad rows onto a duplicate ""
+    // id. Migrating the DB to repair keys would require a version bump.
+    return rows
+      .filter((row): row is UserPreset => typeof row?.id === "string")
+      .map((row) => ({
+        id: row.id,
+        name: typeof row?.name === "string" ? row.name : "Preset",
+        createdAt: typeof row?.createdAt === "number" ? row.createdAt : 0,
+        patch: migratePatch(row?.patch),
+      }));
   } catch {
     return [];
   }

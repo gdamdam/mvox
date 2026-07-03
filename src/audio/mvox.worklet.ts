@@ -26,6 +26,9 @@ class MvoxProcessor extends AudioWorkletProcessor {
   private readonly core = new MvoxEngineCore(sampleRate)
   private readonly telemetryInterval = Math.max(1, Math.round(sampleRate / TELEMETRY_HZ))
   private framesUntilTelemetry = this.telemetryInterval
+  // Reused silent input for the no-mic case; allocating per quantum here would
+  // churn ~375 Float32Arrays/sec on the audio thread (no hot-path allocation).
+  private silentInput = new Float32Array(128)
 
   constructor() {
     super()
@@ -65,7 +68,12 @@ class MvoxProcessor extends AudioWorkletProcessor {
     if (!output || output.length === 0) return true
     const outL = output[0]
     const outR = output[1] ?? output[0]
-    const input = inputs[0]?.[0] ?? new Float32Array(outL.length)
+    let input = inputs[0]?.[0]
+    if (!input) {
+      // Reallocate only if the quantum size ever differs from our cached buffer.
+      if (this.silentInput.length !== outL.length) this.silentInput = new Float32Array(outL.length)
+      input = this.silentInput
+    }
 
     const t = this.core.process(input, outL, outR)
 

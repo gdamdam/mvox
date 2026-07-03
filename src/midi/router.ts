@@ -69,6 +69,11 @@ export class MidiRouter {
 
   private readonly noteCbs = new Set<NoteCb>()
 
+  // Note numbers currently held down (across whichever input is open). Used to
+  // synthesize note-offs when the source drops out from under a held key —
+  // input switch, hot-unplug, or dispose — so nothing sticks on (M6).
+  private readonly activeNotes = new Set<number>()
+
   /** True when Web MIDI is reachable in this environment. */
   static isSupported(): boolean {
     return (
@@ -118,6 +123,8 @@ export class MidiRouter {
   /** Select an input by id, or null to listen to all inputs. */
   selectInput(id: string | null): void {
     if (id === this.selectedInputId) return
+    // The outgoing input can't send note-offs for keys held during the switch.
+    this.flushActiveNotes()
     this.selectedInputId = id
     this.reconcileInputs()
   }
@@ -155,7 +162,19 @@ export class MidiRouter {
     const event = parseMidi(data)
     // Silently drop non-note traffic so subscribers only see note on/off.
     if (event.type === 'other') return
+    // Track held notes so we can release them if the input vanishes mid-hold.
+    if (event.type === 'noteon') this.activeNotes.add(event.note)
+    else this.activeNotes.delete(event.note)
     for (const cb of this.noteCbs) cb(event)
+  }
+
+  /** Emit a synthetic note-off for every held note, then forget them. */
+  private flushActiveNotes(): void {
+    if (this.activeNotes.size === 0) return
+    for (const note of this.activeNotes) {
+      for (const cb of this.noteCbs) cb({ type: 'noteoff', note })
+    }
+    this.activeNotes.clear()
   }
 
   // ── Hot-plug ────────────────────────────────────────────────────────────────
@@ -169,9 +188,16 @@ export class MidiRouter {
     this.access.inputs.forEach((i) => {
       if (i.state === undefined || i.state === 'connected') present.add(i.id)
     })
+    let vanished = false
     for (const id of [...this.inputHandlers.keys()]) {
-      if (!present.has(id)) this.inputHandlers.delete(id)
+      if (!present.has(id)) {
+        this.inputHandlers.delete(id)
+        vanished = true
+      }
     }
+    // An input we were listening to unplugged while a key was down can't send
+    // its note-offs; synthesize them so the held note doesn't stick (M6).
+    if (vanished) this.flushActiveNotes()
     this.reconcileInputs()
   }
 
@@ -179,6 +205,9 @@ export class MidiRouter {
 
   dispose(): void {
     this.disposed = true
+    // Release held notes to subscribers before we drop them, so tearing MIDI
+    // down doesn't leave a note stuck on in the engine (M6).
+    this.flushActiveNotes()
     this.detachInputs()
     if (this.access) this.access.onstatechange = null
     this.noteCbs.clear()

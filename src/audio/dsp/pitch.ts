@@ -43,6 +43,14 @@ const OCTAVE_MARGIN = 0.1;
 
 const UNVOICED: PitchResult = { f0: 0, confidence: 0 };
 
+/**
+ * Number of consecutive unvoiced frames PitchTracker holds the last voiced
+ * estimate before clearing. A single consonant / plosive between syllables
+ * yields an unvoiced frame; holding across a few keeps FOLLOW gated open and
+ * HARMONY voices sustained instead of flickering.
+ */
+const UNVOICED_HOLD_FRAMES = 3;
+
 function clamp(x: number, lo: number, hi: number): number {
   if (x < lo) return lo;
   if (x > hi) return hi;
@@ -53,9 +61,13 @@ function clamp(x: number, lo: number, hi: number): number {
  * Parabolic interpolation around an integer CMND minimum to obtain a
  * sub-sample period estimate. Returns `tau` unchanged at the array edges or
  * when the parabola is degenerate (flat), avoiding division by ~0.
+ *
+ * `tauMin` is the lowest searched lag: at `tau === tauMin` the left neighbor
+ * `cmnd[tau - 1]` sits below the search floor and would bias the interpolated
+ * period, so refinement is skipped there.
  */
-function parabolicRefine(cmnd: Float32Array, tau: number): number {
-  if (tau <= 0 || tau >= cmnd.length - 1) return tau;
+function parabolicRefine(cmnd: Float32Array, tau: number, tauMin: number): number {
+  if (tau <= tauMin || tau >= cmnd.length - 1) return tau;
   const s0 = cmnd[tau - 1];
   const s1 = cmnd[tau];
   const s2 = cmnd[tau + 1];
@@ -101,9 +113,12 @@ export function yinDetect(
   const tauMin = clamp(Math.floor(sampleRate / maxHz), 1, tauMaxAllowed);
   const tauMax = clamp(Math.ceil(sampleRate / minHz), tauMin + 1, tauMaxAllowed);
 
-  // Step 1: difference function d(tau) over the fixed window.
+  // Step 1: difference function d(tau) over the fixed window. Computed from
+  // tau=1 (not tauMin) so the cumulative mean below sums over the full lag
+  // range d(1..tau); truncating the sum at tauMin inflates the normalized dip
+  // near tauMin and makes the detector octave-halve tones close to maxHz.
   const diff = new Float32Array(tauMax + 1);
-  for (let tau = tauMin; tau <= tauMax; tau++) {
+  for (let tau = 1; tau <= tauMax; tau++) {
     let sum = 0;
     for (let j = 0; j < w; j++) {
       const delta = frame[j] - frame[j + tau];
@@ -118,10 +133,8 @@ export function yinDetect(
   const cmnd = new Float32Array(tauMax + 1);
   cmnd[0] = 1;
   let running = 0;
-  for (let tau = tauMin; tau <= tauMax; tau++) {
+  for (let tau = 1; tau <= tauMax; tau++) {
     running += diff[tau];
-    // Bins below tauMin are undefined; use tau as the divisor count so the
-    // normalization stays comparable to the canonical formulation.
     cmnd[tau] = running > 0 ? (diff[tau] * tau) / running : 1;
   }
 
@@ -162,7 +175,7 @@ export function yinDetect(
     }
   }
 
-  const refined = parabolicRefine(cmnd, bestTau);
+  const refined = parabolicRefine(cmnd, bestTau, tauMin);
   if (!Number.isFinite(refined) || refined <= 0) return UNVOICED;
 
   const f0 = sampleRate / refined;
@@ -197,6 +210,7 @@ export class PitchTracker {
   private readonly yinOpts: YinOptions;
   private buffer: Float32Array;
   private last: PitchResult;
+  private unvoicedRun: number;
 
   constructor(sampleRate: number, opts: PitchTrackerOptions = {}) {
     this.sampleRate = sampleRate;
@@ -210,6 +224,7 @@ export class PitchTracker {
     };
     this.buffer = new Float32Array(0);
     this.last = UNVOICED;
+    this.unvoicedRun = 0;
   }
 
   process(block: Float32Array): PitchResult {
@@ -225,7 +240,15 @@ export class PitchTracker {
       const result = yinDetect(frame, this.sampleRate, this.yinOpts);
       // Keep the last *voiced* estimate through brief unvoiced gaps, but adopt
       // fresh voiced results immediately so a sweep tracks without lag.
-      this.last = result;
+      if (result.f0 > 0) {
+        this.last = result;
+        this.unvoicedRun = 0;
+      } else if (this.unvoicedRun < UNVOICED_HOLD_FRAMES) {
+        this.unvoicedRun++;
+        // Hold this.last across the brief gap.
+      } else {
+        this.last = result;
+      }
       offset += this.hopSize;
     }
 
@@ -236,5 +259,6 @@ export class PitchTracker {
   reset(): void {
     this.buffer = new Float32Array(0);
     this.last = UNVOICED;
+    this.unvoicedRun = 0;
   }
 }

@@ -4,8 +4,14 @@
  * Share links carry the PATCH only, never audio, and live in the URL hash so the
  * payload never hits a server. The pipeline is deliberately simple for v1:
  *
- *   patch → sanitizePatch → JSON → encodeURIComponent → btoa  (encode)
- *   atob → decodeURIComponent → JSON.parse → sanitizePatch      (decode)
+ *   patch → sanitizePatch → JSON → utf8 base64url → `<ver>.<payload>`   (encode)
+ *   strip `<ver>.` → base64url → JSON.parse → sanitizePatch            (decode)
+ *
+ * The payload is base64url (RFC 4648 §5: `+/`→`-_`, no `=` padding) so it survives
+ * a URL fragment untouched — encodeURIComponent leaves it byte-for-byte. Decode
+ * still accepts the old standard alphabet (and any percent-escaping an intermediary
+ * added) so existing links keep working. A leading `<COMPACT_VERSION>.` marker lets
+ * a future decoder tell wire formats apart; unmarked (legacy) links decode as v1.
  *
  * Unlike mchord we skip integer-index compaction: the patch is small enough that
  * plain JSON keeps the link readable and the code obvious. `btoa` needs Latin-1,
@@ -31,11 +37,22 @@ export const COMPACT_VERSION = 1
 
 function utf8ToBase64(str: string): string {
   // encodeURIComponent → %XX escapes → unescape gives a Latin-1 string btoa accepts.
+  // Then map to base64url so the payload needs no percent-escaping in a URL fragment.
   return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
 }
 
 function base64ToUtf8(b64: string): string {
-  return decodeURIComponent(escape(atob(b64)))
+  // Accept both alphabets: base64url (-_) and the legacy standard alphabet (+/).
+  // '-'/'_' never appear in standard base64, so the reverse map is a safe no-op there.
+  let std = b64.replace(/-/g, '+').replace(/_/g, '/')
+  // Restore stripped '=' padding to a multiple of 4 (atob wants it).
+  const pad = std.length % 4
+  if (pad === 2) std += '=='
+  else if (pad === 3) std += '='
+  return decodeURIComponent(escape(atob(std)))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,7 +69,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export function encodePatch(patch: MvoxPatch): string {
   const clean = sanitizePatch(patch)
-  return utf8ToBase64(JSON.stringify(clean))
+  // Prefix the wire-format version so a future decoder can tell v1 links apart.
+  return `${COMPACT_VERSION}.${utf8ToBase64(JSON.stringify(clean))}`
 }
 
 /**
@@ -62,9 +80,28 @@ export function encodePatch(patch: MvoxPatch): string {
  */
 export function decodePatch(str: string | null | undefined): MvoxPatch | null {
   if (typeof str !== 'string' || str.length === 0) return null
+  // An intermediary may have percent-escaped the fragment value (old links carry
+  // +, /, = which get %-encoded); undo that first. A malformed escape leaves it as-is.
+  let raw = str
+  try {
+    raw = decodeURIComponent(str)
+  } catch {
+    // keep the original string; base64 decode below will reject it if truly broken
+  }
+  // Strip an optional `<version>.` marker. base64url/base64 never contain '.', so a
+  // dot unambiguously fronts a version; a legacy (unmarked) link is treated as v1.
+  let payload = raw
+  const dot = raw.indexOf('.')
+  if (dot >= 0) {
+    const version = Number(raw.slice(0, dot))
+    if (Number.isInteger(version)) {
+      if (version !== COMPACT_VERSION) return null // unknown/future wire format
+      payload = raw.slice(dot + 1)
+    }
+  }
   let json: string
   try {
-    json = base64ToUtf8(str)
+    json = base64ToUtf8(payload)
   } catch {
     return null
   }
