@@ -1,0 +1,130 @@
+// React binding for the framework-agnostic AudioEngine: owns the engine in a ref
+// (never in state — it isn't serialisable), mirrors status + telemetry into state
+// for the UI, and exposes stable action callbacks. Audio is created lazily on the
+// first start() so it only happens after a user gesture.
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AudioEngine, type EngineStatus } from '../audio/AudioEngine'
+import type { MvoxPatch, Telemetry } from '../audio/contracts'
+
+const IDLE_TELEMETRY: Telemetry = {
+  type: 'telemetry',
+  inputLevel: 0,
+  outputPeak: 0,
+  f0: 0,
+  confidence: 0,
+  activeVoices: 0,
+}
+
+export function useEngine() {
+  const engineRef = useRef<AudioEngine | null>(null)
+  const [status, setStatus] = useState<EngineStatus>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const [micOn, setMicOn] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const telemetryRef = useRef<Telemetry>(IDLE_TELEMETRY)
+
+  function ensureEngine(): AudioEngine {
+    if (!engineRef.current) {
+      const engine = new AudioEngine()
+      engine.onStatus((s, err) => {
+        setStatus(s)
+        if (err) setError(err)
+      })
+      engine.onTelemetry((t) => {
+        telemetryRef.current = t
+      })
+      engineRef.current = engine
+    }
+    return engineRef.current
+  }
+
+  const start = useCallback(async () => {
+    setError(null)
+    try {
+      await ensureEngine().start()
+    } catch {
+      // Status listener already surfaced the message.
+    }
+  }, [])
+
+  const setPatch = useCallback((patch: MvoxPatch) => {
+    engineRef.current?.setPatch(patch)
+  }, [])
+
+  const noteOn = useCallback((midi: number, velocity: number) => {
+    engineRef.current?.noteOn({ midi, velocity })
+  }, [])
+
+  const noteOff = useCallback((midi: number) => {
+    engineRef.current?.noteOff(midi)
+  }, [])
+
+  const panic = useCallback(() => {
+    engineRef.current?.panic()
+  }, [])
+
+  const setTempo = useCallback((bpm: number) => {
+    engineRef.current?.setTempo(bpm)
+  }, [])
+
+  const enableMic = useCallback(async () => {
+    const ok = (await engineRef.current?.enableMic()) ?? false
+    setMicOn(ok)
+    return ok
+  }, [])
+
+  const disableMic = useCallback(() => {
+    engineRef.current?.disableMic()
+    setMicOn(false)
+  }, [])
+
+  const startRecording = useCallback(() => {
+    engineRef.current?.startRecording()
+    setRecording(true)
+  }, [])
+
+  const stopRecording = useCallback((): Blob | null => {
+    const blob = engineRef.current?.stopRecording() ?? null
+    setRecording(false)
+    return blob
+  }, [])
+
+  // Read the latest telemetry snapshot each frame while running, into state, so
+  // meters update without a re-render per worklet message.
+  const [telemetry, setTelemetry] = useState<Telemetry>(IDLE_TELEMETRY)
+  useEffect(() => {
+    if (status !== 'running') return
+    let raf = 0
+    const tick = () => {
+      setTelemetry(telemetryRef.current)
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [status])
+
+  useEffect(() => {
+    return () => {
+      void engineRef.current?.dispose()
+    }
+  }, [])
+
+  return {
+    status,
+    error,
+    micOn,
+    recording,
+    telemetry,
+    start,
+    setPatch,
+    noteOn,
+    noteOff,
+    panic,
+    setTempo,
+    enableMic,
+    disableMic,
+    startRecording,
+    stopRecording,
+  }
+}

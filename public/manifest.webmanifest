@@ -1,0 +1,18 @@
+{
+  "name": "mvox",
+  "short_name": "mvox",
+  "description": "A voice instrument — sing in, play what your voice becomes.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e1615",
+  "theme_color": "#0e1615",
+  "icons": [
+    {
+      "src": "mvox-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

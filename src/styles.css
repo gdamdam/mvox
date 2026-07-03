@@ -1,0 +1,591 @@
+/*
+ * mvox — a phonetics/vocoder faceplate.
+ * Flat painted-panel surfaces, engraved 1px rules, squared corners. Two-signal
+ * palette: amber = your voice, teal = what it becomes. No gradients-as-glow,
+ * no glass, no pill radii. Type is mono-first (silkscreen labels).
+ */
+:root {
+  --panel: #0e1615; /* instrument background — desaturated slate-teal, not black */
+  --plate: #131d1b; /* raised sub-panel */
+  --plate-2: #182422;
+  --line: #26332f; /* engraved rule */
+  --line-hi: #33413c; /* top highlight edge of a plate */
+  --ink: #e7e4d8; /* silkscreen bone, not pure white */
+  --muted: #7f8c82; /* secondary label */
+  --dim: #56635c;
+  --voice: #e0a63a; /* sodium amber — the incoming voice / primary signal */
+  --synth: #3fcdb4; /* phosphor teal — what the voice becomes (mode accent) */
+  --danger: #e8674f;
+  --radius: 2px;
+  --font-display: 'Space Mono', ui-monospace, monospace;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* The mode-accent (teal family) shifts per engine; amber stays constant so the
+   "voice vs. what it becomes" reading holds across modes. */
+.app--vocoder {
+  --synth: #3fcdb4;
+}
+.app--harmony {
+  --synth: #5aa7f0;
+}
+.app--formant {
+  --synth: #d98b5a;
+}
+.app--follow {
+  --synth: #74d17a;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  -webkit-font-smoothing: antialiased;
+}
+button {
+  font-family: var(--font-mono);
+  cursor: pointer;
+  color: inherit;
+}
+
+.app {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-height: 100%;
+}
+
+/* --- Nameplate ----------------------------------------------------------- */
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.75rem;
+}
+/* Formant-chart glyph: the F1–F2 vowel trapezoid mvox lives in. */
+.app__glyph {
+  width: 34px;
+  height: 26px;
+  flex: none;
+}
+.app__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: var(--ink);
+}
+.app__tag {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--voice);
+}
+.app__version {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+}
+.app__error {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid var(--danger);
+  color: var(--ink);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+}
+
+/* --- Transport ----------------------------------------------------------- */
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.btn {
+  background: var(--plate);
+  border: 1px solid var(--line);
+  border-top-color: var(--line-hi); /* faint top highlight = painted metal, not shadow */
+  border-radius: var(--radius);
+  padding: 0.5rem 0.8rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.btn:hover {
+  border-color: var(--dim);
+}
+.btn--primary {
+  background: var(--voice);
+  color: #1c1206;
+  border-color: var(--voice);
+  font-weight: 700;
+}
+.btn--on {
+  border-color: var(--synth);
+  color: var(--synth);
+  background: color-mix(in srgb, var(--synth) 10%, var(--plate));
+}
+.btn--rec {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn--danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--line));
+}
+.transport__src {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.transport__tempo {
+  margin-left: auto;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.transport__tempo input {
+  width: 3.6rem;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.3rem;
+  font-family: var(--font-mono);
+}
+
+/* --- Meters (VU-style) --------------------------------------------------- */
+.meters {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: var(--plate);
+  border: 1px solid var(--line);
+  border-top-color: var(--line-hi);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.85rem;
+}
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 150px;
+}
+.meter__label {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  width: 5.5rem;
+}
+.meter__track {
+  flex: 1;
+  height: 6px;
+  background: #0a100f;
+  border: 1px solid var(--line);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.meter__fill {
+  height: 100%;
+  transition: width 0.06s linear;
+}
+.meter__fill--signal {
+  background: var(--synth);
+}
+.meter__fill--accent {
+  background: var(--voice);
+}
+.meter__fill--danger {
+  background: var(--danger);
+}
+.meters__pitch {
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  color: var(--voice);
+}
+
+/* --- Engine selector ----------------------------------------------------- */
+.tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.tab {
+  flex: 1;
+  background: var(--plate);
+  border: none;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  padding: 0.6rem;
+  font-family: var(--font-display);
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+}
+.tab:last-child {
+  border-right: none;
+}
+.tab--active {
+  color: var(--panel);
+  background: var(--synth);
+  font-weight: 700;
+}
+
+/* --- Panel --------------------------------------------------------------- */
+.panel {
+  background: var(--plate);
+  border: 1px solid var(--line);
+  border-top-color: var(--line-hi);
+  border-radius: var(--radius);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.panel__shared,
+.controls-grid,
+.macros {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+  gap: 0.85rem;
+}
+
+/* Controls */
+.knob,
+.select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.knob__label,
+.select__label {
+  font-size: 0.62rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.knob__input {
+  width: 100%;
+  accent-color: var(--synth);
+}
+.knob__value {
+  font-size: 0.76rem;
+  color: var(--ink);
+}
+.knob__unit {
+  color: var(--dim);
+  margin-left: 2px;
+}
+.select select,
+.presets__factory {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+}
+.toggle {
+  align-self: end;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.toggle--on {
+  border-color: var(--synth);
+  color: var(--synth);
+}
+
+/* Performance surface */
+.perf {
+  display: grid;
+  grid-template-columns: 1fr 190px;
+  gap: 1rem;
+  align-items: start;
+}
+@media (max-width: 640px) {
+  .perf {
+    grid-template-columns: 1fr;
+  }
+}
+/* Reticle XY pad — an instrument crosshair, not a glowing dot. */
+.xypad {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  touch-action: none;
+  overflow: hidden;
+}
+.xypad__grid {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 20% 20%;
+  opacity: 0.5;
+}
+.xypad__dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+}
+/* Crosshair reticle via two rules through the point. */
+.xypad__dot::before,
+.xypad__dot::after {
+  content: '';
+  position: absolute;
+  background: var(--voice);
+}
+.xypad__dot::before {
+  left: 50%;
+  top: -600px;
+  bottom: -600px;
+  width: 1px;
+  transform: translateX(-50%);
+  opacity: 0.5;
+}
+.xypad__dot::after {
+  top: 50%;
+  left: -600px;
+  right: -600px;
+  height: 1px;
+  transform: translateY(-50%);
+  opacity: 0.5;
+}
+.xypad__dot {
+  outline: 2px solid var(--voice);
+  outline-offset: -1px;
+  border-radius: 50%;
+}
+.xypad:focus-visible {
+  border-color: var(--synth);
+  outline: none;
+}
+.xypad__x,
+.xypad__y {
+  position: absolute;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  pointer-events: none;
+}
+.xypad__x {
+  bottom: 4px;
+  right: 6px;
+}
+.xypad__y {
+  top: 4px;
+  left: 6px;
+  writing-mode: vertical-rl;
+}
+
+.fx summary {
+  cursor: pointer;
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.4rem 0;
+}
+.fx[open] summary {
+  color: var(--synth);
+}
+
+/* Presets */
+.presets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.presets__row {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.presets__row button {
+  background: var(--plate);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.7rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.presets__row button:hover:not(:disabled) {
+  border-color: var(--synth);
+}
+.presets__row button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.presets__msg {
+  font-size: 0.7rem;
+  color: var(--synth);
+}
+.presets__user {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.presets__chip {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.presets__chip button {
+  background: var(--plate);
+  border: none;
+  color: var(--ink);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.7rem;
+}
+.presets__x {
+  color: var(--danger) !important;
+  border-left: 1px solid var(--line) !important;
+}
+
+/* Keyboard — flat plastic, no lavender gradient/glow */
+.kbd-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.kbd-bar__info {
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.keys {
+  display: flex;
+  height: 92px;
+  user-select: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.keys__white-slot {
+  position: relative;
+  flex: 1;
+}
+.keys__white {
+  position: absolute;
+  inset: 0;
+  background: #d9d6cb;
+  border: none;
+  border-right: 1px solid #1a2321;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 5px;
+}
+.keys__white:active {
+  background: #c4c1b6;
+}
+.keys__black {
+  position: absolute;
+  top: 0;
+  right: -18%;
+  width: 36%;
+  height: 60%;
+  background: #14201d;
+  border: 1px solid #060a09;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 4px;
+}
+.keys__hint {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: #6a7168;
+}
+.keys__black .keys__hint {
+  color: #7f8c82;
+}
+.keys__key--on {
+  background: var(--voice) !important;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 10, 9, 0.8);
+  display: grid;
+  place-items: center;
+  z-index: 10;
+  padding: 1rem;
+}
+.modal__box {
+  background: var(--plate);
+  border: 1px solid var(--voice);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  max-width: 420px;
+}
+.modal__box h2 {
+  margin-top: 0;
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--voice);
+}
+.modal__box p {
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+.modal__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

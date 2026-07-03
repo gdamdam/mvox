@@ -1,0 +1,114 @@
+// Minimal async IndexedDB wrapper for USER presets. Deliberately tiny and fully
+// guarded: private-browsing modes, disabled storage, and quota errors are common,
+// so every operation degrades to a safe no-op / empty result instead of throwing.
+// On READ we re-run each stored patch through migratePatch (the trust boundary),
+// so corrupt or stale-shaped data on disk can never reach the app.
+
+import type { MvoxPatch } from "../audio/contracts";
+import { migratePatch } from "./schema";
+
+export interface UserPreset {
+  id: string;
+  name: string;
+  createdAt: number;
+  patch: MvoxPatch;
+}
+
+const DB_NAME = "mvox";
+const STORE = "presets";
+const DB_VERSION = 1;
+
+// Feature-detect indexedDB. `typeof` guards against non-browser contexts (SSR,
+// the worklet, Node test runs) where the global simply doesn't exist.
+export function idbAvailable(): boolean {
+  return typeof indexedDB !== "undefined" && indexedDB !== null;
+}
+
+// Open (and lazily create) the object store. Rejects on any error so callers can
+// catch-and-degrade; the store uses `id` as its keyPath so put() upserts by id.
+function openDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (!idbAvailable()) {
+      reject(new Error("indexedDB unavailable"));
+      return;
+    }
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error("indexedDB open failed"));
+    req.onblocked = () => reject(new Error("indexedDB blocked"));
+  });
+}
+
+// Run one transaction and resolve when it completes (not merely when the request
+// succeeds) so writes are durable before we report success.
+function withStore<T>(
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T> | null,
+): Promise<T | undefined> {
+  return openDB().then(
+    (db) =>
+      new Promise<T | undefined>((resolve, reject) => {
+        const tx = db.transaction(STORE, mode);
+        const store = tx.objectStore(STORE);
+        let result: T | undefined;
+        const req = fn(store);
+        if (req) req.onsuccess = () => (result = req.result);
+        tx.oncomplete = () => {
+          db.close();
+          resolve(result);
+        };
+        tx.onerror = () => {
+          db.close();
+          reject(tx.error ?? new Error("indexedDB txn failed"));
+        };
+        tx.onabort = () => {
+          db.close();
+          reject(tx.error ?? new Error("indexedDB txn aborted"));
+        };
+      }),
+  );
+}
+
+// Upsert a preset. Swallows errors: persistence is best-effort, and a failed save
+// should not crash a live performance.
+export async function idbSavePreset(p: UserPreset): Promise<void> {
+  try {
+    await withStore("readwrite", (store) => store.put(p));
+  } catch {
+    // no-op: storage unavailable or write rejected
+  }
+}
+
+export async function idbDeletePreset(id: string): Promise<void> {
+  try {
+    await withStore("readwrite", (store) => store.delete(id));
+  } catch {
+    // no-op
+  }
+}
+
+// List all presets, sanitizing every patch on the way out. Returns [] on any
+// failure so the UI can always render. migratePatch guarantees each `patch` is a
+// valid current-version MvoxPatch even if the stored record was partial/corrupt.
+export async function idbListPresets(): Promise<UserPreset[]> {
+  try {
+    const rows = await withStore<UserPreset[]>("readonly", (store) =>
+      store.getAll(),
+    );
+    if (!Array.isArray(rows)) return [];
+    return rows.map((row) => ({
+      id: String(row?.id ?? ""),
+      name: typeof row?.name === "string" ? row.name : "Preset",
+      createdAt: typeof row?.createdAt === "number" ? row.createdAt : 0,
+      patch: migratePatch(row?.patch),
+    }));
+  } catch {
+    return [];
+  }
+}
