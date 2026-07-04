@@ -195,6 +195,36 @@ export default function App() {
         </svg>
         <h1 className="app__title">mvox</h1>
         <span className="app__tag">Your voice is the patch</span>
+        {/* Always-visible master/monitor sliders — bind to the same shared patch
+            state as the panel knobs, so the two stay in sync. */}
+        <div className="app__master">
+          <label className="hslider">
+            <span className="hslider__label">Master</span>
+            <input
+              className="hslider__input"
+              type="range"
+              min={RANGES.masterGain.min}
+              max={RANGES.masterGain.max}
+              step={(RANGES.masterGain.max - RANGES.masterGain.min) / 100}
+              value={patch.shared.masterGain}
+              onChange={(e) => update((p) => { p.shared.masterGain = parseFloat(e.target.value) })}
+            />
+            <span className="hslider__value">{patch.shared.masterGain.toFixed(2)}</span>
+          </label>
+          <label className="hslider">
+            <span className="hslider__label">Monitor</span>
+            <input
+              className="hslider__input"
+              type="range"
+              min={RANGES.monitorMix.min}
+              max={RANGES.monitorMix.max}
+              step={(RANGES.monitorMix.max - RANGES.monitorMix.min) / 100}
+              value={patch.shared.monitorMix}
+              onChange={(e) => update((p) => { p.shared.monitorMix = parseFloat(e.target.value) })}
+            />
+            <span className="hslider__value">{patch.shared.monitorMix.toFixed(2)}</span>
+          </label>
+        </div>
         <span className="app__version">v{__APP_VERSION__}</span>
       </header>
 

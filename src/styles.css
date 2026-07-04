@@ -97,8 +97,34 @@ button {
   text-transform: uppercase;
   color: var(--voice);
 }
-.app__version {
+.app__master {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.hslider {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.hslider__label {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.hslider__input {
+  width: 84px;
+}
+.hslider__value {
+  min-width: 2.2ch;
+  font-size: 0.68rem;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.app__version {
   color: var(--dim);
   font-size: 0.68rem;
   letter-spacing: 0.1em;
