@@ -34,10 +34,13 @@ const START_TIMEOUT_MS = 5000
 export const MAX_RECORD_SECONDS = 600
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
-  ])
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  // Clear the timer on settle so a fast success doesn't leave a pending timeout
+  // (and its stray late rejection) alive for up to `ms`.
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
 export class AudioEngine {
@@ -133,7 +136,7 @@ export class AudioEngine {
       const master = context.createGain()
       master.gain.value = 0.85
       const limiter = context.createDynamicsCompressor()
-      limiter.threshold.value = -3
+      limiter.threshold.value = this.patch.fx.limiterCeiling
       limiter.knee.value = 0
       limiter.ratio.value = 20
       limiter.attack.value = 0.003
@@ -222,6 +225,9 @@ export class AudioEngine {
 
   setPatch(patch: MvoxPatch): void {
     this.patch = sanitizePatch(patch)
+    // The limiter is a native node outside the worklet, so its patch param must
+    // be applied here — otherwise fx.limiterCeiling is dead.
+    if (this.limiter) this.limiter.threshold.value = this.patch.fx.limiterCeiling
     this.post({ type: 'set-patch', patch: this.patch })
   }
 

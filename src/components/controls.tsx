@@ -10,13 +10,15 @@ interface KnobProps {
   max: number
   step?: number
   unit?: string
+  /** Plain-language tooltip for terse labels. */
+  title?: string
   onChange: (v: number) => void
 }
 
-export function Knob({ label, value, min, max, step, unit, onChange }: KnobProps) {
+export function Knob({ label, value, min, max, step, unit, title, onChange }: KnobProps) {
   const display = Number.isInteger(value) ? value.toString() : value.toFixed(2)
   return (
-    <label className="knob">
+    <label className="knob" title={title}>
       <span className="knob__label">{label}</span>
       <input
         className="knob__input"
@@ -125,8 +127,23 @@ export function XYPad({ x, y, xLabel, yLabel, onChange }: XYPadProps) {
       className="xypad"
       role="slider"
       aria-label={`XY pad: ${xLabel} / ${yLabel}`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={(x * 100) | 0}
       aria-valuetext={`${xLabel} ${(x * 100) | 0}%, ${yLabel} ${(y * 100) | 0}%`}
       tabIndex={0}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 0.01 : 0.05
+        let nx = x
+        let ny = y
+        if (e.key === 'ArrowLeft') nx = Math.max(0, x - step)
+        else if (e.key === 'ArrowRight') nx = Math.min(1, x + step)
+        else if (e.key === 'ArrowDown') ny = Math.max(0, y - step)
+        else if (e.key === 'ArrowUp') ny = Math.min(1, y + step)
+        else return
+        e.preventDefault()
+        onChange(nx, ny)
+      }}
       onPointerDown={(e) => {
         dragging.current = true
         e.currentTarget.setPointerCapture(e.pointerId)

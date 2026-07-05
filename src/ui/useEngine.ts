@@ -110,6 +110,9 @@ export function useEngine() {
   useEffect(() => {
     return () => {
       void engineRef.current?.dispose()
+      // Null the ref so a remount (StrictMode dev double-mount) lazily builds a
+      // fresh engine instead of start()ing the disposed one.
+      engineRef.current = null
     }
   }, [])
 

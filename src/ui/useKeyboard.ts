@@ -54,7 +54,12 @@ export function useKeyboard({ onNoteOn, onNoteOff, enabled }: KeyboardHandlers) 
       if (!enabledRef.current || e.repeat || isEditableTarget(e.target)) return
       // Ignore modifier combos (Cmd/Ctrl/Alt shortcuts). Playing a note here
       // would strand it: macOS suppresses keyup for letters while Meta is held.
-      if (e.metaKey || e.ctrlKey || e.altKey) return
+      // Also release notes already sounding — their keyup is suppressed too, so
+      // a Cmd press while holding a note would otherwise leave it stuck on.
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        releaseAll()
+        return
+      }
       const code = e.code
       if (code === OCTAVE_DOWN_CODE) {
         setOctave((o) => clampOctave(o - 1))

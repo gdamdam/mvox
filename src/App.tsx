@@ -26,6 +26,14 @@ const MODE_LABELS: Record<EngineMode, string> = {
   follow: 'FOLLOW',
 }
 
+// One-line orientation per mode so a first-time visitor doesn't have to guess.
+const MODE_DESCRIPTIONS: Record<EngineMode, string> = {
+  vocoder: 'Your voice shapes a synth carrier — hold notes to make it talk.',
+  harmony: 'Harmony voices are layered onto whatever you sing.',
+  formant: 'Reshapes your voice: pitch/size shift, robot, whisper, ring mod.',
+  follow: 'A synth glides along with the pitch you sing or hum.',
+}
+
 const scaleOptions = MODES.map((m) => ({ value: m, label: m }))
 const rootOptions = NOTE_NAMES.map((n, i) => ({ value: String(i), label: n }))
 
@@ -96,6 +104,9 @@ export default function App() {
   // Note handlers shared by computer keys, MIDI, and the on-screen keyboard.
   const noteOn = useCallback(
     (midi: number, velocity: number) => {
+      // Ignore input before audio runs (the on-screen keys are always rendered),
+      // otherwise a pre-start click latches the key highlight with no sound.
+      if (engine.status !== 'running') return
       engine.noteOn(midi, velocity)
       setActiveNotes((prev) => new Set(prev).add(midi))
     },
@@ -247,14 +258,16 @@ export default function App() {
             >
               {engine.micOn ? '🎤 Mic on' : '🎤 Enable mic'}
             </button>
-            <span className="transport__src">{engine.micOn ? 'live voice' : 'demo voice'}</span>
+            <span className="transport__src">
+              {engine.micOn ? 'live voice' : 'demo voice — enable mic to sing in'}
+            </span>
             <button type="button" className={`btn ${midiOn ? 'btn--on' : ''}`} onClick={toggleMidi}>
               MIDI
             </button>
             <button type="button" className={`btn ${engine.recording ? 'btn--rec' : ''}`} onClick={record}>
               {engine.recording ? '⏺ Stop & save' : '⏺ Record'}
             </button>
-            <button type="button" className="btn btn--danger" onClick={panic}>
+            <button type="button" className="btn btn--danger" onClick={panic} title="Release all stuck notes">
               PANIC
             </button>
             <label className="transport__tempo">
@@ -293,6 +306,7 @@ export default function App() {
             type="button"
             role="tab"
             aria-selected={patch.mode === m}
+            aria-controls="mode-panel"
             className={`tab ${patch.mode === m ? 'tab--active' : ''}`}
             onClick={() => update((p) => { p.mode = m })}
           >
@@ -300,13 +314,12 @@ export default function App() {
           </button>
         ))}
       </nav>
+      <p className="mode-desc">{MODE_DESCRIPTIONS[patch.mode]}</p>
 
-      <section className="panel">
+      <section className="panel" id="mode-panel" role="tabpanel">
         <div className="panel__shared">
           <Select label="Key" value={String(patch.shared.keyRoot)} options={rootOptions} onChange={(v) => update((p) => { p.shared.keyRoot = Number(v) })} />
           <Select label="Scale" value={patch.shared.scaleMode} options={scaleOptions} onChange={(v: Mode) => update((p) => { p.shared.scaleMode = v })} />
-          <Knob label="Monitor" min={0} max={1} value={patch.shared.monitorMix} onChange={(x) => update((p) => { p.shared.monitorMix = x })} />
-          <Knob label="Master" min={RANGES.masterGain.min} max={RANGES.masterGain.max} value={patch.shared.masterGain} onChange={(x) => update((p) => { p.shared.masterGain = x })} />
         </div>
 
         <ModeControls patch={patch} update={update} />
@@ -342,7 +355,8 @@ export default function App() {
         </details>
       </section>
 
-      <PresetBar patch={patch} onLoad={(p) => { setPatchState(p); setTempo(120) }} />
+      {/* Presets don't carry tempo, so keep the user's current BPM on load. */}
+      <PresetBar patch={patch} onLoad={setPatchState} />
 
       <div className="kbd-bar">
         <span className="kbd-bar__info">Oct {kbd.octave} (Z/X) · Vel {(kbd.velocity * 100) | 0}% (C/V)</span>
@@ -350,9 +364,17 @@ export default function App() {
       </div>
 
       {showMicWarn ? (
-        <div className="modal" role="dialog" aria-modal="true">
+        <div
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mic-warn-title"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setShowMicWarn(false)
+          }}
+        >
           <div className="modal__box">
-            <h2>Use headphones</h2>
+            <h2 id="mic-warn-title">Use headphones</h2>
             <p>
               mvox processes your microphone on-device — nothing is uploaded. Wear headphones before
               enabling the mic to avoid feedback howl. The dry voice is not monitored by default.
@@ -361,7 +383,8 @@ export default function App() {
               <button type="button" className="btn" onClick={() => setShowMicWarn(false)}>
                 Cancel
               </button>
-              <button type="button" className="btn btn--primary" onClick={confirmMic}>
+              {/* autoFocus moves keyboard focus into the dialog so Tab/Escape work. */}
+              <button type="button" className="btn btn--primary" onClick={confirmMic} autoFocus>
                 I'm on headphones — enable mic
               </button>
             </div>

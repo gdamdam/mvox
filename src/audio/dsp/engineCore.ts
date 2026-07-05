@@ -93,6 +93,11 @@ export class MvoxEngineCore {
   // Notes currently held from keyboard/MIDI (carrier pitch source).
   private heldNotes: number[] = []
 
+  // Reusable voice-block scratch: process() runs on the audio thread, where a
+  // per-quantum allocation means GC churn and eventual dropouts. Re-allocated
+  // only if the quantum size changes (it doesn't in practice).
+  private voiceScratch = new Float32Array(0)
+
   constructor(private readonly sampleRate: number) {
     this.carrier = new CarrierSynth(sampleRate)
     this.followSynth = new CarrierSynth(sampleRate)
@@ -124,11 +129,15 @@ export class MvoxEngineCore {
     const bandsChanged =
       patch.vocoder.bands !== this.patch.vocoder.bands ||
       patch.vocoder.release !== this.patch.vocoder.release
+    const modeChanged = patch.mode !== this.patch.mode
     this.patch = patch
     this.carrier.setWave(patch.vocoder.carrierWave)
     this.followSynth.setWave(patch.follow.wave)
     this.fx.setParams(patch.fx, this.bpm)
     if (bandsChanged) this.configureBands(patch.vocoder.bands, patch.vocoder.release)
+    // Entering a mode must not resume from another visit's stale ring buffers /
+    // envelopes — that reads as a click or brief warble on the first block.
+    if (modeChanged) this.resetModeState()
   }
 
   setTempo(bpm: number): void {
@@ -167,6 +176,12 @@ export class MvoxEngineCore {
     this.panic()
     this.pitch.reset()
     this.fx.reset()
+    this.resetModeState()
+    this.demoPos = 0
+  }
+
+  /** Clear all per-mode DSP state (filters, shifter ring buffers, follow glide). */
+  private resetModeState(): void {
     for (const b of this.bands) {
       b.analysis.reset()
       b.synth.reset()
@@ -176,13 +191,15 @@ export class MvoxEngineCore {
     this.robotShifter.reset()
     for (const r of this.formantRes) r.reset()
     this.ringPhase = 0
+    // NaN forces the formant resonator coeffs to recompute on the next block.
+    this.formantLastShift = Number.NaN
+    this.formantLastSize = Number.NaN
     // Clear FOLLOW glide/gate state so switching modes doesn't leave the voice
     // count stuck +1 or glide the next note from a stale pre-reset pitch.
     this.followHz = 0
     this.followTargetHz = 0
     this.followGate = false
     this.followOscPhase = 0
-    this.demoPos = 0
   }
 
   private configureBands(count: number, release: number): void {
@@ -225,7 +242,8 @@ export class MvoxEngineCore {
     const mode = this.patch.mode
 
     // Assemble the voice block (live input or demo loop) + track pitch + level.
-    const voice = new Float32Array(n)
+    if (this.voiceScratch.length !== n) this.voiceScratch = new Float32Array(n)
+    const voice = this.voiceScratch
     let sumSq = 0
     for (let i = 0; i < n; i += 1) {
       const v = this.live ? input[i] ?? 0 : this.nextVoiceSample()

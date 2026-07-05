@@ -71,7 +71,9 @@ button {
 .app__header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.85rem;
+  row-gap: 0.5rem;
   border-bottom: 1px solid var(--line);
   padding-bottom: 0.75rem;
 }
@@ -283,6 +285,12 @@ button {
   color: var(--panel);
   background: var(--synth);
   font-weight: 700;
+}
+.mode-desc {
+  margin: -0.35rem 0 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
 }
 
 /* --- Panel --------------------------------------------------------------- */

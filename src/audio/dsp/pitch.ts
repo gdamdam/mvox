@@ -208,7 +208,11 @@ export class PitchTracker {
   private readonly frameSize: number;
   private readonly hopSize: number;
   private readonly yinOpts: YinOptions;
-  private buffer: Float32Array;
+  // Reusable scratch buffers: process() runs on the audio thread (~375×/sec), so
+  // steady-state must not allocate — GC pauses there cause audible dropouts.
+  private pending: Float32Array;
+  private pendingLen: number;
+  private frame: Float32Array;
   private last: PitchResult;
   private unvoicedRun: number;
 
@@ -222,22 +226,33 @@ export class PitchTracker {
       minHz: opts.minHz ?? DEFAULT_MIN_HZ,
       maxHz: opts.maxHz ?? DEFAULT_MAX_HZ,
     };
-    this.buffer = new Float32Array(0);
+    // Leftover after framing is < frameSize, so frameSize + a typical quantum
+    // fits in 2×frameSize; larger blocks grow the scratch once, then reuse it.
+    this.pending = new Float32Array(this.frameSize * 2);
+    this.pendingLen = 0;
+    this.frame = new Float32Array(this.frameSize);
     this.last = UNVOICED;
     this.unvoicedRun = 0;
   }
 
   process(block: Float32Array): PitchResult {
-    // Append incoming samples to whatever remains unconsumed.
-    const merged = new Float32Array(this.buffer.length + block.length);
-    merged.set(this.buffer, 0);
-    merged.set(block, this.buffer.length);
+    // Append incoming samples to whatever remains unconsumed. Grows only when a
+    // larger block than ever seen arrives; steady state allocates nothing.
+    const needed = this.pendingLen + block.length;
+    if (needed > this.pending.length) {
+      const grown = new Float32Array(needed);
+      grown.set(this.pending.subarray(0, this.pendingLen));
+      this.pending = grown;
+    }
+    this.pending.set(block, this.pendingLen);
+    this.pendingLen = needed;
 
     let offset = 0;
-    while (merged.length - offset >= this.frameSize) {
-      // Copy so downstream owners can't observe overlapping-frame mutation.
-      const frame = merged.slice(offset, offset + this.frameSize);
-      const result = yinDetect(frame, this.sampleRate, this.yinOpts);
+    while (this.pendingLen - offset >= this.frameSize) {
+      // Copy into the reusable frame so yinDetect never sees overlapping-frame
+      // mutation of live pending data.
+      this.frame.set(this.pending.subarray(offset, offset + this.frameSize));
+      const result = yinDetect(this.frame, this.sampleRate, this.yinOpts);
       // Keep the last *voiced* estimate through brief unvoiced gaps, but adopt
       // fresh voiced results immediately so a sweep tracks without lag.
       if (result.f0 > 0) {
@@ -252,12 +267,15 @@ export class PitchTracker {
       offset += this.hopSize;
     }
 
-    this.buffer = offset > 0 ? merged.slice(offset) : merged;
+    if (offset > 0) {
+      this.pending.copyWithin(0, offset, this.pendingLen);
+      this.pendingLen -= offset;
+    }
     return this.last;
   }
 
   reset(): void {
-    this.buffer = new Float32Array(0);
+    this.pendingLen = 0;
     this.last = UNVOICED;
     this.unvoicedRun = 0;
   }

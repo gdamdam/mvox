@@ -41,6 +41,14 @@ function readFrac(buf: Float32Array, writeIdx: number, delay: number): number {
   return buf[i0] * (1 - frac) + buf[i1] * frac;
 }
 
+// Flush subnormals to zero in recirculating state. On x86 without FTZ, feedback
+// paths decaying into denormal floats cost 10-100× per operation — enough to
+// starve the audio thread once input goes silent with reverb/delay running.
+// 1e-15 is around -300 dBFS, far below anything audible.
+function flushDenormal(x: number): number {
+  return x > -1e-15 && x < 1e-15 ? 0 : x;
+}
+
 // --- reverb building blocks (Freeverb) ---------------------------------------
 
 // Lowpass-damped comb filter. `filterStore` is the one-pole lowpass state that
@@ -60,9 +68,9 @@ class Comb {
   process(input: number): number {
     const out = this.buf[this.idx];
     // One-pole lowpass in the feedback path.
-    this.filterStore = out * (1 - this.damp) + this.filterStore * this.damp;
+    this.filterStore = flushDenormal(out * (1 - this.damp) + this.filterStore * this.damp);
     // Scrub before it recirculates so a transient overflow can't persist.
-    this.buf[this.idx] = finite(input + this.filterStore * this.feedback);
+    this.buf[this.idx] = flushDenormal(finite(input + this.filterStore * this.feedback));
     this.idx = this.idx + 1 >= this.buf.length ? 0 : this.idx + 1;
     return out;
   }
@@ -88,7 +96,7 @@ class Allpass {
   process(input: number): number {
     const bufout = this.buf[this.idx];
     const out = -input + bufout;
-    this.buf[this.idx] = finite(input + bufout * Allpass.FEEDBACK);
+    this.buf[this.idx] = flushDenormal(finite(input + bufout * Allpass.FEEDBACK));
     this.idx = this.idx + 1 >= this.buf.length ? 0 : this.idx + 1;
     return out;
   }
@@ -264,8 +272,8 @@ export class FxChain {
     // ±4 write clamp keep the loop from running away even under pathological input.
     const dl = readFrac(this.delayBufL, this.delayWrite, this.delaySamples);
     const dr = readFrac(this.delayBufR, this.delayWrite, this.delaySamples);
-    this.delayBufL[this.delayWrite] = clamp(l + dr * this.delayFeedback, -4, 4);
-    this.delayBufR[this.delayWrite] = clamp(r + dl * this.delayFeedback, -4, 4);
+    this.delayBufL[this.delayWrite] = flushDenormal(clamp(l + dr * this.delayFeedback, -4, 4));
+    this.delayBufR[this.delayWrite] = flushDenormal(clamp(r + dl * this.delayFeedback, -4, 4));
     this.delayWrite = this.delayWrite + 1 >= this.delayBufL.length ? 0 : this.delayWrite + 1;
     l = l * (1 - this.delayMix) + dl * this.delayMix;
     r = r * (1 - this.delayMix) + dr * this.delayMix;

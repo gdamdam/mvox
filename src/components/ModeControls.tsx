@@ -20,7 +20,7 @@ export function ModeControls({ patch, update }: Props) {
         <div className="controls-grid">
           <Knob label="Bands" min={RANGES.vocoderBands.min} max={RANGES.vocoderBands.max} step={1} value={v.bands} onChange={(x) => update((p) => { p.vocoder.bands = x })} />
           <Knob label="Bass" min={0} max={1} value={v.bassBoost} onChange={(x) => update((p) => { p.vocoder.bassBoost = x })} />
-          <Knob label="Air/Sib" min={0} max={1} value={v.sibilance} onChange={(x) => update((p) => { p.vocoder.sibilance = x })} />
+          <Knob label="Air/Sib" title="Sibilance/air band level (s and t sounds)" min={0} max={1} value={v.sibilance} onChange={(x) => update((p) => { p.vocoder.sibilance = x })} />
           <Knob label="Release" min={0} max={1} value={v.release} onChange={(x) => update((p) => { p.vocoder.release = x })} />
           <Knob label="Carrier" min={0} max={1} value={v.carrierMix} onChange={(x) => update((p) => { p.vocoder.carrierMix = x })} />
           <Select label="Wave" value={v.carrierWave} options={waveOptions} onChange={(w) => update((p) => { p.vocoder.carrierWave = w })} />
@@ -37,7 +37,7 @@ export function ModeControls({ patch, update }: Props) {
           <Knob label="Detune" min={0} max={50} unit="¢" value={h.detune} onChange={(x) => update((p) => { p.harmony.detune = x })} />
           <Knob label="Formant" min={0} max={1} value={h.formantPreserve} onChange={(x) => update((p) => { p.harmony.formantPreserve = x })} />
           {h.intervals.map((iv, i) => (
-            <Knob key={i} label={`Int ${i + 1}`} min={-14} max={14} step={1} value={iv} onChange={(x) => update((p) => { p.harmony.intervals[i] = x })} />
+            <Knob key={i} label={`Int ${i + 1}`} title={`Harmony interval ${i + 1} in scale degrees`} min={-14} max={14} step={1} value={iv} onChange={(x) => update((p) => { p.harmony.intervals[i] = x })} />
           ))}
         </div>
       )
@@ -50,7 +50,7 @@ export function ModeControls({ patch, update }: Props) {
           <Knob label="Size" min={0.5} max={2} value={f.size} onChange={(x) => update((p) => { p.formant.size = x })} />
           <Knob label="Robot" min={0} max={1} value={f.robot} onChange={(x) => update((p) => { p.formant.robot = x })} />
           <Knob label="Whisper" min={0} max={1} value={f.whisper} onChange={(x) => update((p) => { p.formant.whisper = x })} />
-          <Knob label="Ring Hz" min={0} max={800} step={1} unit="Hz" value={f.ringHz} onChange={(x) => update((p) => { p.formant.ringHz = x })} />
+          <Knob label="Ring Hz" title="Ring modulator frequency" min={0} max={800} step={1} unit="Hz" value={f.ringHz} onChange={(x) => update((p) => { p.formant.ringHz = x })} />
           <Knob label="Ring" min={0} max={1} value={f.ringAmount} onChange={(x) => update((p) => { p.formant.ringAmount = x })} />
         </div>
       )
@@ -61,7 +61,7 @@ export function ModeControls({ patch, update }: Props) {
         <div className="controls-grid">
           <Knob label="Glide" min={0} max={1} value={f.glide} onChange={(x) => update((p) => { p.follow.glide = x })} />
           <Knob label="Blend" min={0} max={1} value={f.blend} onChange={(x) => update((p) => { p.follow.blend = x })} />
-          <Knob label="Gate" min={0} max={1} value={f.confidenceGate} onChange={(x) => update((p) => { p.follow.confidenceGate = x })} />
+          <Knob label="Gate" title="Pitch-confidence gate — higher ignores uncertain pitch" min={0} max={1} value={f.confidenceGate} onChange={(x) => update((p) => { p.follow.confidenceGate = x })} />
           <Select label="Wave" value={f.wave} options={waveOptions} onChange={(w) => update((p) => { p.follow.wave = w })} />
         </div>
       )
@@ -76,9 +76,10 @@ export function FxControls({ patch, update }: Props) {
       <Knob label="Drive" min={0} max={1} value={fx.drive} onChange={(x) => update((p) => { p.fx.drive = x })} />
       <Knob label="Chorus" min={0} max={1} value={fx.chorus} onChange={(x) => update((p) => { p.fx.chorus = x })} />
       <Knob label="Delay" min={0} max={1.5} unit="s" value={fx.delayTime} onChange={(x) => update((p) => { p.fx.delayTime = x })} />
-      <Knob label="Fbk" min={0} max={0.95} value={fx.delayFeedback} onChange={(x) => update((p) => { p.fx.delayFeedback = x })} />
-      <Knob label="Dly Mix" min={0} max={1} value={fx.delayMix} onChange={(x) => update((p) => { p.fx.delayMix = x })} />
+      <Knob label="Fbk" title="Delay feedback" min={0} max={0.95} value={fx.delayFeedback} onChange={(x) => update((p) => { p.fx.delayFeedback = x })} />
+      <Knob label="Dly Mix" title="Delay wet/dry mix" min={0} max={1} value={fx.delayMix} onChange={(x) => update((p) => { p.fx.delayMix = x })} />
       <Knob label="Reverb" min={0} max={1} value={fx.reverb} onChange={(x) => update((p) => { p.fx.reverb = x })} />
+      <Knob label="Ceiling" title="Output limiter ceiling" min={RANGES.fxLimiterCeiling.min} max={RANGES.fxLimiterCeiling.max} step={0.5} unit="dB" value={fx.limiterCeiling} onChange={(x) => update((p) => { p.fx.limiterCeiling = x })} />
       <Toggle label="Sync" value={fx.delaySync} onChange={(b) => update((p) => { p.fx.delaySync = b })} />
     </div>
   )

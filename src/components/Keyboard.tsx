@@ -3,6 +3,10 @@
 // convenience/visual aid — the computer keyboard is the primary input.
 
 import { NOTE_CODES } from '../keyboard/layout'
+import { NOTE_NAMES } from '../audio/dsp/scale'
+
+// e.g. midi 60 → "C4", for screen-reader labels on the visual keys.
+const noteName = (midi: number) => `${NOTE_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`
 
 interface KeyboardProps {
   octave: number
@@ -36,6 +40,7 @@ export function Keyboard({ octave, activeNotes, onNoteOn, onNoteOff }: KeyboardP
             <button
               type="button"
               className={`keys__white ${activeNotes.has(midi) ? 'keys__key--on' : ''}`}
+              aria-label={noteName(midi)}
               onPointerDown={(e) => {
                 // Ignore non-primary buttons (e.g. right-click): the context menu
                 // swallows pointerup/leave, otherwise leaving the note stuck on.
@@ -55,6 +60,7 @@ export function Keyboard({ octave, activeNotes, onNoteOn, onNoteOff }: KeyboardP
               <button
                 type="button"
                 className={`keys__black ${activeNotes.has(midi + 1) ? 'keys__key--on' : ''}`}
+                aria-label={noteName(midi + 1)}
                 onPointerDown={(e) => {
                   e.stopPropagation()
                   // Ignore non-primary buttons (see white key above).

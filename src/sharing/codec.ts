@@ -23,6 +23,7 @@
  * can never inject out-of-range values or a malformed shape into the DSP core.
  */
 import { sanitizePatch, type MvoxPatch } from '../audio/contracts'
+import { migratePatch } from '../persistence/schema'
 
 /** Stable URL-fragment param key: `…#p=<payload>`. */
 export const FRAGMENT_KEY = 'p'
@@ -113,7 +114,13 @@ export function decodePatch(str: string | null | undefined): MvoxPatch | null {
   }
   // Only objects can describe a patch; arrays/primitives are rejected outright.
   if (!isRecord(parsed)) return null
-  return sanitizePatch(parsed)
+  // Same trust boundary as file import: migratePatch rejects a link written by a
+  // NEWER client (future PATCH_VERSION) instead of silently stripping its fields.
+  try {
+    return migratePatch(parsed)
+  } catch {
+    return null
+  }
 }
 
 /** Build a full share URL with the patch in a `#p=` fragment. */

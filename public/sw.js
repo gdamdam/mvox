@@ -39,7 +39,11 @@ async function precache() {
 
 self.addEventListener('install', (event) => {
   event.waitUntil(precache())
-  self.skipWaiting()
+  // No skipWaiting(): the new worker must NOT take over tabs still running the
+  // previous bundle. Activating early would purge the old version's caches while
+  // an open tab may still lazily fetch its (now deleted, server-replaced) hashed
+  // assets — e.g. the audio worklet is only fetched on Start, which would then
+  // 404 mid-session. The new worker activates once the old tabs are gone.
 })
 
 self.addEventListener('activate', (event) => {

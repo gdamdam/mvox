@@ -15,20 +15,33 @@ import packageJson from './package.json' with { type: 'json' }
 // actually re-runs and the newest chunks get cached instead of only the first-ever set.
 function precacheManifest(): Plugin {
   let outDir = 'dist'
+  let publicDir = 'public'
   let swVersion = 'dev'
   return {
     name: 'mvox-precache-manifest',
     apply: 'build',
     configResolved(config) {
       outDir = path.resolve(config.root, config.build.outDir)
+      publicDir = config.publicDir
     },
-    generateBundle(_options, bundle) {
+    async generateBundle(_options, bundle) {
       const assets = Object.keys(bundle)
         .filter((f) => !f.endsWith('.html') && f !== 'precache-manifest.json')
         .sort()
       const source = JSON.stringify(assets)
       // Hash the hashed-asset list: it changes iff a chunk's content changed.
-      swVersion = createHash('sha256').update(source).digest('hex').slice(0, 12)
+      // Also fold in the un-hashed public/ shell assets the SW precaches — they
+      // keep the same URL across deploys, so without this a change to them alone
+      // would leave sw.js bytes identical and the stale copies cached forever.
+      const hash = createHash('sha256').update(source)
+      for (const name of ['manifest.webmanifest', 'mvox-mark.svg']) {
+        try {
+          hash.update(await readFile(path.join(publicDir, name)))
+        } catch {
+          // Missing shell asset: leave it out of the hash rather than fail the build.
+        }
+      }
+      swVersion = hash.digest('hex').slice(0, 12)
       this.emitFile({
         type: 'asset',
         fileName: 'precache-manifest.json',
