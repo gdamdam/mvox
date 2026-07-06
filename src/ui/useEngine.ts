@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AudioEngine, type EngineStatus } from '../audio/AudioEngine'
 import type { MvoxPatch, Telemetry } from '../audio/contracts'
+import { createMbusClient, type MbusClient, type Publication } from '../transport/mbus'
 
 const IDLE_TELEMETRY: Telemetry = {
   type: 'telemetry',
@@ -23,6 +24,14 @@ export function useEngine() {
   const [micOn, setMicOn] = useState(false)
   const [recording, setRecording] = useState(false)
   const telemetryRef = useRef<Telemetry>(IDLE_TELEMETRY)
+  // mbus publish (see src/transport/mbus): offer the master output to the mbus
+  // patchbay over the local link-bridge. Off by default and session-transient;
+  // until enabled no client exists and no socket is opened, so behavior is
+  // unchanged. With the bridge absent the client retries quietly.
+  const mbusClientRef = useRef<MbusClient | null>(null)
+  const mbusPubRef = useRef<Publication | null>(null)
+  const mbusTapRef = useRef<AudioNode | null>(null)
+  const [busPublishing, setBusPublishing] = useState(false)
 
   function ensureEngine(): AudioEngine {
     if (!engineRef.current) {
@@ -67,6 +76,27 @@ export function useEngine() {
   const setTempo = useCallback((bpm: number) => {
     engineRef.current?.setTempo(bpm)
   }, [])
+
+  const toggleBusPublish = useCallback(() => setBusPublishing((v) => !v), [])
+
+  // Reconcile the bus intent with the live graph. Re-runs when the engine
+  // (re)starts or closes so the publication always feeds the current tap;
+  // disable unannounces the source and drops the bridge socket.
+  useEffect(() => {
+    const tap = engineRef.current?.getMasterTap() ?? null
+    if (mbusPubRef.current && (mbusTapRef.current !== tap || !busPublishing)) {
+      mbusPubRef.current.stop()
+      mbusPubRef.current = null
+      mbusTapRef.current = null
+    }
+    if (busPublishing && tap && !mbusPubRef.current) {
+      mbusClientRef.current ??= createMbusClient()
+      mbusClientRef.current.connect()
+      mbusPubRef.current = mbusClientRef.current.publishOutput(tap, 'mvox')
+      mbusTapRef.current = tap
+    }
+    if (!busPublishing) mbusClientRef.current?.disconnect()
+  }, [busPublishing, status])
 
   const enableMic = useCallback(async () => {
     // Already on: a second tap must not re-invoke enable (avoids a redundant
@@ -132,5 +162,7 @@ export function useEngine() {
     disableMic,
     startRecording,
     stopRecording,
+    busPublishing,
+    toggleBusPublish,
   }
 }

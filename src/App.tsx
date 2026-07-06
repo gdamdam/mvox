@@ -236,6 +236,17 @@ export default function App() {
             <span className="hslider__value">{patch.shared.monitorMix.toFixed(2)}</span>
           </label>
         </div>
+        <button
+          type="button"
+          className={engine.busPublishing ? 'btn btn--on' : 'btn'}
+          aria-pressed={engine.busPublishing}
+          title={engine.busPublishing
+            ? 'Publishing to the mbus patchbay (via the local link-bridge)'
+            : 'Publish the master output to the mbus patchbay (needs the local link-bridge; harmless without it)'}
+          onClick={engine.toggleBusPublish}
+        >
+          {engine.busPublishing ? 'bus on' : 'bus'}
+        </button>
         <span className="app__version">v{__APP_VERSION__}</span>
       </header>
 

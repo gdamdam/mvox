@@ -43,6 +43,7 @@ No mic? A built-in demo voice makes every engine playable the moment you press *
 - **FX tail** — drive → chorus → tempo-syncable delay → reverb, into a master limiter.
 - **Capture & share** — record the master out to a 16-bit **WAV**; 10 factory presets across the four modes; save your own to IndexedDB; export/import JSON; share a patch (never audio) via a URL fragment.
 - **Polyphony** — up to 8 carrier voices, oldest-note stealing, no hung notes on mode switch or device removal, and a **PANIC** button.
+- **Optional mbus publish** — the "bus" toggle in the header offers the master output to the [mbus](https://mbus.mpump.live) patchbay as a source named `mvox` (tab-to-tab WebRTC via the local **mpump** link-bridge, peer-to-peer, no server). Off by default; harmless without the bridge. The vendored mbus-client lives in `src/transport/mbus/` (provenance in its index.ts header).
 
 ## Run locally
 
@@ -151,6 +152,7 @@ the patch in the URL fragment and never reach a server; recordings are yours to 
 - Pitch tracking is a **real-time YIN** — low latency, good on clear monophonic voice; expect occasional octave slips on very low/breathy input. Documented honestly, not hidden.
 - The pitch shifter is a **granular (v1)** design: musically useful, with some warble on large shifts. FORMANT's shift/size impose a **movable resonant formant colour** — an expressive approximation, not a phase-vocoder-grade formant-preserving shifter.
 - Best with **headphones**; the mic is disabled until you confirm.
+- **mbus publish** needs the **mpump** link-bridge running locally (`ws://localhost:19876`); without it the "bus" toggle just keeps retrying quietly and nothing is published.
 
 ## Repository map
 

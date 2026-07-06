@@ -69,6 +69,12 @@ export class AudioEngine {
     return this.status
   }
 
+  /** End-of-chain output (post-limiter recorder pass-through — what's heard)
+   *  for publishing to the mbus patchbay. null until running. */
+  getMasterTap(): AudioNode | null {
+    return this.recorderNode
+  }
+
   onTelemetry(fn: TelemetryListener): () => void {
     this.telemetryListeners.add(fn)
     return () => this.telemetryListeners.delete(fn)
