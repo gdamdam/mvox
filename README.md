@@ -11,7 +11,7 @@
 |_| |_| |_|\_/ \___//_/\_\
 </pre>
 
-[![version](https://img.shields.io/badge/version-0.1.0-b98cff)](./package.json)
+[![version](https://img.shields.io/badge/version-0.1.7-b98cff)](./package.json)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-8b5cf6)](./LICENSE)
 [![tests](https://img.shields.io/badge/tests-125%20passing-6cd23a)](#verification)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)](./tsconfig.app.json)

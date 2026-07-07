@@ -197,14 +197,16 @@ export default function App() {
   return (
     <div className={`app app--${patch.mode}`}>
       <header className="app__header">
-        {/* Brand mark: the mvox voice-envelope waveform. */}
-        <img
-          className="app__glyph"
-          src={`${import.meta.env.BASE_URL}mvox-mark.svg`}
-          alt=""
-          aria-hidden="true"
-        />
-        <h1 className="app__title">mvox</h1>
+        {/* Brand mark: the mvox wordmark lockup (glyph + name). */}
+        <h1 className="app__title">
+          <img
+            className="app__wordmark"
+            src={`${import.meta.env.BASE_URL}mvox-wordmark.svg`}
+            alt="mvox"
+            width={120}
+            height={40}
+          />
+        </h1>
         <span className="app__tag">Your voice is the patch</span>
         {/* Always-visible master/monitor sliders — bind to the same shared patch
             state as the panel knobs, so the two stay in sync. */}

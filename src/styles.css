@@ -77,21 +77,17 @@ button {
   border-bottom: 1px solid var(--line);
   padding-bottom: 0.75rem;
 }
-/* Brand mark: the mvox voice-envelope waveform. */
-.app__glyph {
-  width: 28px;
-  height: 28px;
-  flex: none;
-  border-radius: 6px;
-}
+/* Brand mark: the mvox wordmark lockup. */
 .app__title {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: lowercase;
-  color: var(--ink);
+  line-height: 0;
+  flex: none;
+}
+.app__wordmark {
+  display: block;
+  height: 40px;
+  width: auto;
+  border-radius: 8px;
 }
 .app__tag {
   font-family: var(--font-display);

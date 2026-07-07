@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 160" role="img" aria-label="mvox">
+  <rect width="540" height="160" rx="32" fill="#100e18"/>
+  <g fill="#c58bff">
+    <rect x="44" y="66" width="12" height="28" rx="6"/>
+    <rect x="66" y="50" width="12" height="60" rx="6"/>
+    <rect x="88" y="34" width="12" height="92" rx="6"/>
+    <rect x="110" y="52" width="12" height="56" rx="6"/>
+    <rect x="132" y="70" width="12" height="20" rx="6"/>
+  </g>
+  <rect x="88" y="34" width="12" height="92" rx="6" fill="#ff5c9d"/>
+  <text x="176" y="106" font-family="'SF Mono','Fira Code','Cascadia Code',monospace"
+        font-size="72" font-weight="700" fill="#ece4f7" letter-spacing="1">mvox</text>
+</svg>

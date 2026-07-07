@@ -1,11 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="mvox">
-  <rect width="512" height="512" rx="72" fill="#0e1615"/>
-  <g fill="#e0a63a">
+  <defs>
+    <radialGradient id="mvx1-glow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#c58bff" stop-opacity="0.38"/>
+      <stop offset="100%" stop-color="#c58bff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="104" fill="#100e18"/>
+  <rect width="512" height="512" rx="104" fill="url(#mvx1-glow)"/>
+  <g fill="#c58bff">
     <rect x="140" y="221" width="22" height="70" rx="11"/>
     <rect x="184" y="191" width="22" height="130" rx="11"/>
+    <rect x="228" y="156" width="22" height="200" rx="11"/>
     <rect x="272" y="191" width="22" height="130" rx="11"/>
     <rect x="316" y="221" width="22" height="70" rx="11"/>
     <rect x="360" y="236" width="22" height="40" rx="11"/>
   </g>
-  <rect x="228" y="156" width="22" height="200" rx="11" fill="#f4c66a"/>
+  <rect x="228" y="156" width="22" height="200" rx="11" fill="#ff5c9d"/>
 </svg>
