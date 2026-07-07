@@ -197,13 +197,13 @@ export default function App() {
   return (
     <div className={`app app--${patch.mode}`}>
       <header className="app__header">
-        {/* Formant chart: the F1–F2 vowel trapezoid mvox works inside. */}
-        <svg className="app__glyph" viewBox="0 0 34 26" aria-hidden="true">
-          <polygon points="2,2 32,4 26,24 6,20" fill="none" stroke="var(--line-hi)" strokeWidth="1" />
-          <circle cx="8" cy="6" r="1.6" fill="var(--voice)" />
-          <circle cx="26" cy="7" r="1.6" fill="var(--synth)" />
-          <circle cx="12" cy="19" r="1.6" fill="var(--muted)" />
-        </svg>
+        {/* Brand mark: the mvox voice-envelope waveform. */}
+        <img
+          className="app__glyph"
+          src={`${import.meta.env.BASE_URL}mvox-mark.svg`}
+          alt=""
+          aria-hidden="true"
+        />
         <h1 className="app__title">mvox</h1>
         <span className="app__tag">Your voice is the patch</span>
         {/* Always-visible master/monitor sliders — bind to the same shared patch

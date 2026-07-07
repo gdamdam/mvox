@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="72" fill="#0e1615" />
-  <g fill="none" stroke="#e0a63a" stroke-width="22" stroke-linecap="round">
-    <path d="M96 256 h32" />
-    <path d="M160 200 v112" />
-    <path d="M224 136 v240" />
-    <path d="M288 168 v176" />
-    <path d="M352 216 v80" />
-    <path d="M416 248 v16" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="mvox">
+  <rect width="512" height="512" rx="72" fill="#0e1615"/>
+  <g fill="#e0a63a">
+    <rect x="140" y="221" width="22" height="70" rx="11"/>
+    <rect x="184" y="191" width="22" height="130" rx="11"/>
+    <rect x="272" y="191" width="22" height="130" rx="11"/>
+    <rect x="316" y="221" width="22" height="70" rx="11"/>
+    <rect x="360" y="236" width="22" height="40" rx="11"/>
   </g>
+  <rect x="228" y="156" width="22" height="200" rx="11" fill="#f4c66a"/>
 </svg>

@@ -77,11 +77,12 @@ button {
   border-bottom: 1px solid var(--line);
   padding-bottom: 0.75rem;
 }
-/* Formant-chart glyph: the F1–F2 vowel trapezoid mvox lives in. */
+/* Brand mark: the mvox voice-envelope waveform. */
 .app__glyph {
-  width: 34px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   flex: none;
+  border-radius: 6px;
 }
 .app__title {
   margin: 0;
