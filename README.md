@@ -11,9 +11,9 @@
 |_| |_| |_|\_/ \___//_/\_\
 </pre>
 
-[![version](https://img.shields.io/badge/version-0.1.7-b98cff)](./package.json)
+[![version](https://img.shields.io/badge/version-0.1.8-b98cff)](./package.json)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-8b5cf6)](./LICENSE)
-[![tests](https://img.shields.io/badge/tests-125%20passing-6cd23a)](#verification)
+[![tests](https://img.shields.io/badge/tests-158%20passing-6cd23a)](#verification)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)](./tsconfig.app.json)
 [![React](https://img.shields.io/badge/React-19-61dafb)](https://react.dev)
 [![Vite](https://img.shields.io/badge/Vite-8-646cff)](https://vite.dev)
@@ -111,7 +111,7 @@ worklet is a thin shell, and the UI never touches samples. Randomness is seeded/
 npm run check
 ```
 
-**125 tests across 13 files**, colocated with their source. The DSP contract every unit is held to:
+**158 tests across 16 files**, colocated with their source. The DSP contract every unit is held to:
 deterministic output, `reset()` reproducibility, finite/bounded output over long renders, and
 clamping of out-of-range input. Highlights:
 
