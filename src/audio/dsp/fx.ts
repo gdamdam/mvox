@@ -156,6 +156,11 @@ export class FxChain {
   private readonly allpassR: Allpass[];
   private reverbWet = 0;
 
+  // Scratch outputs for process(): written in place each call so the per-sample
+  // audio loop doesn't allocate a tuple (~48k allocs/s at 48 kHz → GC glitches).
+  outL = 0;
+  outR = 0;
+
   constructor(sampleRate: number) {
     // Guard the rate itself so every derived buffer size is sane.
     this.sampleRate = Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : 48000;
@@ -218,7 +223,9 @@ export class FxChain {
     }
   }
 
-  process(inL: number, inR: number): [number, number] {
+  // Writes the processed stereo pair to `outL`/`outR` rather than returning a
+  // freshly allocated tuple — this runs once per audio sample in the hot loop.
+  process(inL: number, inR: number): void {
     // Scrub inputs up front: a NaN from an upstream engine must not propagate.
     let l = finite(inL);
     let r = finite(inR);
@@ -297,7 +304,8 @@ export class FxChain {
       r = r * (1 - this.reverbWet) + revR * this.reverbWet;
     }
 
-    return [finite(l), finite(r)];
+    this.outL = finite(l);
+    this.outR = finite(r);
   }
 
   reset(): void {

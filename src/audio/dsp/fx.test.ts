@@ -47,7 +47,10 @@ function allFinite(xs: number[]): boolean {
 function runL(fx: FxParams, bpm: number, input: number[]): number[] {
   const chain = new FxChain(FS);
   chain.setParams(fx, bpm);
-  return input.map((x) => chain.process(x, x)[0]);
+  return input.map((x) => {
+    chain.process(x, x);
+    return chain.outL;
+  });
 }
 
 // A short deterministic pseudo-random sequence (no Math.random → reproducible).
@@ -198,7 +201,9 @@ describe("stability", () => {
     );
     let maxAbs = 0;
     for (const x of input) {
-      const [l, r] = chain.process(x, x);
+      chain.process(x, x);
+      const l = chain.outL;
+      const r = chain.outR;
       expect(Number.isFinite(l)).toBe(true);
       expect(Number.isFinite(r)).toBe(true);
       maxAbs = Math.max(maxAbs, Math.abs(l), Math.abs(r));
@@ -210,13 +215,13 @@ describe("stability", () => {
     const chain = new FxChain(FS);
     chain.setParams(withParams({ drive: 1, chorus: 1, delayFeedback: 0.9, delayMix: 1, reverb: 1 }), 120);
     // Feed a NaN, then normal samples: output must stay finite throughout.
-    const [nl, nr] = chain.process(Number.NaN, Number.NaN);
-    expect(Number.isFinite(nl)).toBe(true);
-    expect(Number.isFinite(nr)).toBe(true);
+    chain.process(Number.NaN, Number.NaN);
+    expect(Number.isFinite(chain.outL)).toBe(true);
+    expect(Number.isFinite(chain.outR)).toBe(true);
     for (let i = 0; i < 1000; i++) {
-      const [l, r] = chain.process(0.3, 0.3);
-      expect(Number.isFinite(l)).toBe(true);
-      expect(Number.isFinite(r)).toBe(true);
+      chain.process(0.3, 0.3);
+      expect(Number.isFinite(chain.outL)).toBe(true);
+      expect(Number.isFinite(chain.outR)).toBe(true);
     }
   });
 });
@@ -229,7 +234,11 @@ describe("reset", () => {
     const chain = new FxChain(FS);
     chain.setParams(fx, 120);
     const input = noise(2000);
-    const run = (): number[] => input.map((x) => chain.process(x, x)[0]);
+    const run = (): number[] =>
+      input.map((x) => {
+        chain.process(x, x);
+        return chain.outL;
+      });
 
     const first = run();
     chain.reset();

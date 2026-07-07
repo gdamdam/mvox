@@ -273,10 +273,10 @@ export class MvoxEngineCore {
       // Optional dry-voice monitor mix (off by default).
       mono += voice[i] * this.patch.shared.monitorMix
 
-      const [l, r] = this.fx.process(mono, mono)
+      this.fx.process(mono, mono)
       const gain = this.patch.shared.masterGain
-      const outLv = Number.isFinite(l) ? l * gain : 0
-      const outRv = Number.isFinite(r) ? r * gain : 0
+      const outLv = Number.isFinite(this.fx.outL) ? this.fx.outL * gain : 0
+      const outRv = Number.isFinite(this.fx.outR) ? this.fx.outR * gain : 0
       outL[i] = outLv
       outR[i] = outRv
       const a = Math.max(Math.abs(outLv), Math.abs(outRv))
