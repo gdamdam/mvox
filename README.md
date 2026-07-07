@@ -4,13 +4,6 @@
 
 **Your voice is the patch.**
 
-<pre>
- _ __ _____   _____ __  __
-| '_ ` _ \ \ / / _ \\ \/ /
-| | | | | \ V / (_) |>  <
-|_| |_| |_|\_/ \___//_/\_\
-</pre>
-
 [![version](https://img.shields.io/badge/version-0.1.8-b98cff)](./package.json)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-8b5cf6)](./LICENSE)
 [![tests](https://img.shields.io/badge/tests-158%20passing-6cd23a)](#verification)
