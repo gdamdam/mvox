@@ -11,7 +11,7 @@ import {
   type EngineMode,
   type MvoxPatch,
 } from '../contracts'
-import { Biquad, bandpassCoeffs, highpassCoeffs, lowpassCoeffs } from './biquad'
+import { Biquad, bandpassCoeffs, highShelfCoeffs, highpassCoeffs, lowpassCoeffs } from './biquad'
 import { CarrierSynth } from './carrier'
 import { EnvelopeFollower, vocoderBandFrequencies, vocoderBandQ } from './vocoder'
 import { FxChain } from './fx'
@@ -33,6 +33,16 @@ const HARMONY_VOICES = 4
 // FORMANT resonator center frequencies (Hz), scaled at runtime by shift+size.
 // Module-level so processFormant allocates nothing on the render hot path.
 const FORMANT_BASES = [650, 1080, 2650]
+
+// HARMONY formant preservation. A pitch shifter drags formants along with the
+// pitch, so an up-shifted voice sounds "chipmunky" (bright) and a down-shifted
+// one "muddy". We approximate keeping formants in place with a high-shelf tilt on
+// each shifted voice: darken up-shifts, brighten down-shifts, proportional to the
+// shift (in octaves) times the formantPreserve knob. This is an honest v1 — a
+// broad spectral tilt, not spectrally-exact formant transfer — matching the
+// granular shifter's own "good v1" character.
+const HARMONY_FORMANT_SHELF_HZ = 1500
+const HARMONY_FORMANT_TILT_DB = 9 // shelf dB per octave of shift at preserve = 1
 
 // PolyBLEP residual correction around discontinuities (t in [0,1), dt = phase
 // inc). Mirrors CarrierSynth's anti-aliasing so FOLLOW's saw/pulse don't alias.
@@ -79,8 +89,16 @@ export class MvoxEngineCore {
   private readonly sibilanceHp: Biquad
   private readonly bassLp: Biquad
 
-  // HARMONY: one pitch shifter per possible voice.
+  // HARMONY: one pitch shifter per possible voice, plus a per-voice high-shelf for
+  // formant-preserve tilt. harmonyShelfDb caches each shelf's last applied tilt
+  // (quantized) so we redesign coeffs only when the shift or the knob moves, not
+  // per sample. harmonyL/R carry the stereo-spread output of processHarmony back
+  // to process() without allocating on the render hot path.
   private readonly harmonyShifters: PitchShifter[] = []
+  private readonly harmonyShelves: Biquad[] = []
+  private readonly harmonyShelfDb: number[] = []
+  private harmonyL = 0
+  private harmonyR = 0
 
   // FORMANT: three resonators + a robot/formant shifter + ring-mod phase.
   private readonly formantRes: Biquad[] = []
@@ -132,6 +150,8 @@ export class MvoxEngineCore {
 
     for (let i = 0; i < HARMONY_VOICES; i += 1) {
       this.harmonyShifters.push(new PitchShifter(sampleRate))
+      this.harmonyShelves.push(new Biquad())
+      this.harmonyShelfDb.push(Number.NaN)
     }
     for (let i = 0; i < 3; i += 1) this.formantRes.push(new Biquad())
     this.robotShifter = new PitchShifter(sampleRate)
@@ -206,6 +226,9 @@ export class MvoxEngineCore {
       b.follower.reset()
     }
     for (const s of this.harmonyShifters) s.reset()
+    for (const s of this.harmonyShelves) s.reset()
+    // NaN forces each harmony formant shelf to recompute on the next block.
+    for (let i = 0; i < this.harmonyShelfDb.length; i += 1) this.harmonyShelfDb[i] = Number.NaN
     this.robotShifter.reset()
     for (const r of this.formantRes) r.reset()
     this.ringPhase = 0
@@ -273,24 +296,29 @@ export class MvoxEngineCore {
 
     let peak = 0
     for (let i = 0; i < n; i += 1) {
-      let mono = 0
+      // Engines are mono except HARMONY, which pans its voices into a stereo pair.
+      let monoL = 0
+      let monoR = 0
       switch (this.renderMode) {
         case 'vocoder':
-          mono = this.processVocoder(voice[i])
+          monoL = monoR = this.processVocoder(voice[i])
           break
         case 'harmony':
-          mono = this.processHarmony(voice[i], pitchResult.f0, pitchResult.confidence)
+          this.processHarmony(voice[i], pitchResult.f0, pitchResult.confidence)
+          monoL = this.harmonyL
+          monoR = this.harmonyR
           break
         case 'formant':
-          mono = this.processFormant(voice[i], pitchResult.f0, pitchResult.confidence)
+          monoL = monoR = this.processFormant(voice[i], pitchResult.f0, pitchResult.confidence)
           break
         case 'follow':
-          mono = this.processFollow(voice[i], pitchResult.f0, pitchResult.confidence)
+          monoL = monoR = this.processFollow(voice[i], pitchResult.f0, pitchResult.confidence)
           break
       }
       // Mode-switch crossfade envelope, applied to the engine voice (not the FX
       // tail, which is left to ring across the swap for a smoother transition).
-      mono *= this.fadeGain
+      monoL *= this.fadeGain
+      monoR *= this.fadeGain
       if (this.fadeDir < 0) {
         this.fadeGain -= this.fadeStep
         if (this.fadeGain <= 0) {
@@ -307,9 +335,11 @@ export class MvoxEngineCore {
         }
       }
       // Optional dry-voice monitor mix (off by default).
-      mono += voice[i] * this.patch.shared.monitorMix
+      const monitor = voice[i] * this.patch.shared.monitorMix
+      monoL += monitor
+      monoR += monitor
 
-      this.fx.process(mono, mono)
+      this.fx.process(monoL, monoR)
       const gain = this.patch.shared.masterGain
       const outLv = Number.isFinite(this.fx.outL) ? this.fx.outL * gain : 0
       const outRv = Number.isFinite(this.fx.outR) ? this.fx.outR * gain : 0
@@ -352,10 +382,14 @@ export class MvoxEngineCore {
   }
 
   // --- HARMONY --------------------------------------------------------------
-  private processHarmony(voiceSample: number, f0: number, confidence: number): number {
-    const { voiceCount, intervals, level, spread, detune } = this.patch.harmony
+  // Writes a stereo pair into harmonyL/harmonyR. The dry voice stays centered;
+  // each harmony voice is pitch-shifted, formant-tilted (formantPreserve), then
+  // panned across the field by `spread`.
+  private processHarmony(voiceSample: number, f0: number, confidence: number): void {
+    const { voiceCount, intervals, level, spread, detune, formantPreserve } = this.patch.harmony
     // Dry voice always present; harmony voices layered on top when pitch is sure.
-    let out = voiceSample
+    let outL = voiceSample
+    let outR = voiceSample
     const voiced = confidence > 0.4 && f0 > 0
     const root = this.patch.shared.keyRoot
     const mode = this.patch.shared.scaleMode
@@ -365,15 +399,41 @@ export class MvoxEngineCore {
       if (v < voiceCount && voiced) {
         const targetMidi = diatonicHarmony(baseMidi, root, mode, intervals[v])
         const detuneSemis = (detune / 100) * (v % 2 === 0 ? 1 : -1)
-        shifter.setSemitones(targetMidi - baseMidi + detuneSemis)
-        out += shifter.process(voiceSample) * level
+        const shiftSemis = targetMidi - baseMidi + detuneSemis
+        shifter.setSemitones(shiftSemis)
+        let s = shifter.process(voiceSample)
+
+        // Formant preserve: high-shelf tilt opposing the shift. Recompute the
+        // shelf only when the (quantized) tilt actually moves so cos/sin/sqrt stay
+        // off the per-sample path. At preserve == 0 the shelf is bypassed, so the
+        // output is bit-identical to the plain granular shifter (old behavior).
+        if (formantPreserve > 0) {
+          const oct = Math.max(-2, Math.min(2, shiftSemis / 12))
+          const tiltDb = Math.round(-oct * formantPreserve * HARMONY_FORMANT_TILT_DB * 2) / 2
+          if (tiltDb !== this.harmonyShelfDb[v]) {
+            this.harmonyShelves[v].setCoeffs(
+              highShelfCoeffs(this.sampleRate, HARMONY_FORMANT_SHELF_HZ, tiltDb),
+            )
+            this.harmonyShelfDb[v] = tiltDb
+          }
+          s = this.harmonyShelves[v].process(s)
+        }
+
+        s *= level
+        // Equal-spacing pan across [-spread, +spread]; single voice sits center.
+        // Unity-center linear balance: pan == 0 leaves L == R (so spread == 0 is
+        // exactly the old mono behavior) and no gain ever exceeds 1 (no clipping).
+        const panPos = voiceCount > 1 ? (v / (voiceCount - 1)) * 2 - 1 : 0
+        const pan = spread * panPos
+        outL += s * (1 - Math.max(0, pan))
+        outR += s * (1 - Math.max(0, -pan))
       } else {
         // Keep the buffer moving so re-enabling doesn't glitch, but output silence.
         shifter.process(voiceSample)
       }
     }
-    void spread // pan handled at block level would need stereo taps; mono-summed for v1
-    return out
+    this.harmonyL = outL
+    this.harmonyR = outR
   }
 
   // --- FORMANT --------------------------------------------------------------

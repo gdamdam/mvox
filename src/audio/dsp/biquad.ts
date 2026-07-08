@@ -122,6 +122,33 @@ export function highpassCoeffs(
   return normalize(b0, b1, b2, a0, a1, a2);
 }
 
+// RBJ high-shelf. Boosts (gainDb > 0) or cuts (gainDb < 0) everything above the
+// corner `freq` by `gainDb`, leaving the low band at unity. gainDb == 0 collapses
+// to an identity filter. Used by HARMONY's formant-preserve tilt.
+export function highShelfCoeffs(
+  sampleRate: number,
+  freq: number,
+  gainDb: number,
+  q = 0.707,
+): BiquadCoeffs {
+  const w0 = omega(sampleRate, freq);
+  const qc = clamp(q, MIN_Q, MAX_Q);
+  const A = Math.pow(10, (Number.isFinite(gainDb) ? gainDb : 0) / 40);
+  const cos = Math.cos(w0);
+  const alpha = Math.sin(w0) / (2 * qc);
+  const twoSqrtAalpha = 2 * Math.sqrt(A) * alpha;
+  const Am1 = A - 1;
+  const Ap1 = A + 1;
+
+  const b0 = A * (Ap1 + Am1 * cos + twoSqrtAalpha);
+  const b1 = -2 * A * (Am1 + Ap1 * cos);
+  const b2 = A * (Ap1 + Am1 * cos - twoSqrtAalpha);
+  const a0 = Ap1 - Am1 * cos + twoSqrtAalpha;
+  const a1 = 2 * (Am1 - Ap1 * cos);
+  const a2 = Ap1 - Am1 * cos - twoSqrtAalpha;
+  return normalize(b0, b1, b2, a0, a1, a2);
+}
+
 export class Biquad {
   private b0 = 1;
   private b1 = 0;
