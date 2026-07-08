@@ -5,12 +5,15 @@
 // hashed chunks (e.g. the audio worklet, fetched only on start) never get cached.
 // In dev the literal token is used verbatim, which is a fine static cache name.
 const SW_VERSION = '__SW_VERSION__'
-// Versioned cache names: activate() deletes any cache not matching the current
+// Cache namespace for this app. activate() only purges caches under this prefix,
+// so a shared/subpath origin hosting other apps keeps their caches intact.
+const CACHE_PREFIX = 'mvox-'
+// Versioned cache names: activate() deletes any mvox cache not matching the current
 // names, so the prior deploy's shell/runtime caches are purged on activation.
-const SHELL_CACHE = `mvox-shell-${SW_VERSION}`
+const SHELL_CACHE = `${CACHE_PREFIX}shell-${SW_VERSION}`
 // Runtime cache is additionally size-capped: within a single version, hashed bundles
 // from many navigations can accumulate; trimming to a fixed budget bounds disk usage.
-const RUNTIME_CACHE = `mvox-runtime-${SW_VERSION}`
+const RUNTIME_CACHE = `${CACHE_PREFIX}runtime-${SW_VERSION}`
 const RUNTIME_MAX_ENTRIES = 64
 const APP_BASE = new URL('./', self.location.href).pathname
 const SHELL_URLS = [APP_BASE, `${APP_BASE}manifest.webmanifest`, `${APP_BASE}mvox-mark.svg`]
@@ -53,7 +56,7 @@ self.addEventListener('activate', (event) => {
     caches.keys()
       .then((keys) => Promise.all(
         keys
-          .filter((key) => key !== SHELL_CACHE && key !== RUNTIME_CACHE)
+          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== SHELL_CACHE && key !== RUNTIME_CACHE)
           .map((key) => caches.delete(key)),
       ))
       .then(() => self.clients.claim()),

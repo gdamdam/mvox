@@ -88,6 +88,9 @@ export class MvoxEngineCore {
   private followHz = 0
   private followTargetHz = 0
   private followGate = false
+  // Last rounded input MIDI while gated; re-snapping only when this changes keeps
+  // scale.ts's array-allocating snap off the per-sample path yet tracks the melody.
+  private followLastRawMidi = Number.NaN
   private readonly followSynth: CarrierSynth
 
   // Notes currently held from keyboard/MIDI (carrier pitch source).
@@ -199,6 +202,7 @@ export class MvoxEngineCore {
     this.followHz = 0
     this.followTargetHz = 0
     this.followGate = false
+    this.followLastRawMidi = Number.NaN
     this.followOscPhase = 0
   }
 
@@ -400,21 +404,26 @@ export class MvoxEngineCore {
     const p = this.patch.follow
     const gateOpen = confidence >= p.confidenceGate && f0 > 0
     if (gateOpen) {
-      if (!this.followGate) {
-        // New note: snap the target to the nearest scale tone (shared key/scale)
-        // for musical output; the glide then seeds from the current pitch. We snap
-        // only on gate-open (not per sample) so scale.ts's array-allocating helpers
-        // stay off the render hot path.
+      // Track the sung pitch continuously so a legato line follows the melody
+      // instead of sticking on its first note. Snap the target to the nearest
+      // scale tone (shared key/scale) for musical output; the glide smooths the
+      // step. Re-snap only when the rounded input pitch changes so scale.ts's
+      // array-allocating helpers stay off the per-sample render hot path.
+      const midi = hzToMidi(f0)
+      const rawMidi = Math.round(midi)
+      if (rawMidi !== this.followLastRawMidi) {
         const snapped = snapMidiToScale(
-          hzToMidi(f0),
+          midi,
           this.patch.shared.keyRoot,
           this.patch.shared.scaleMode,
         )
         this.followTargetHz = midiToHz(snapped)
-        this.followGate = true
+        this.followLastRawMidi = rawMidi
       }
+      this.followGate = true
     } else if (this.followGate) {
       this.followGate = false
+      this.followLastRawMidi = Number.NaN
     }
 
     // Portamento glide toward the target pitch (time constant from glide knob).

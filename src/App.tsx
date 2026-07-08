@@ -258,6 +258,14 @@ export default function App() {
       ) : null}
 
       <div className="transport">
+        {running && engine.suspended ? (
+          // The browser suspended the context (tab backgrounded / interruption);
+          // status is still 'running' but audio is silent until a user gesture
+          // resumes it. engine.start() resumes a suspended running context.
+          <button type="button" className="btn btn--primary" onClick={engine.start}>
+            ▶ Resume audio
+          </button>
+        ) : null}
         {!running ? (
           <button type="button" className="btn btn--primary" onClick={engine.start}>
             {engine.status === 'starting' ? 'Starting…' : '▶ Start audio'}

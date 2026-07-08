@@ -27,6 +27,8 @@ export type EngineStatus = 'idle' | 'starting' | 'running' | 'error'
 
 type TelemetryListener = (t: Telemetry) => void
 type StatusListener = (status: EngineStatus, error?: string) => void
+type MicListener = (on: boolean) => void
+type SuspendListener = (suspended: boolean) => void
 
 const START_TIMEOUT_MS = 5000
 
@@ -64,6 +66,8 @@ export class AudioEngine {
   private patch: MvoxPatch = DEFAULT_PATCH
   private readonly telemetryListeners = new Set<TelemetryListener>()
   private readonly statusListeners = new Set<StatusListener>()
+  private readonly micListeners = new Set<MicListener>()
+  private readonly suspendListeners = new Set<SuspendListener>()
 
   getStatus(): EngineStatus {
     return this.status
@@ -83,6 +87,29 @@ export class AudioEngine {
   onStatus(fn: StatusListener): () => void {
     this.statusListeners.add(fn)
     return () => this.statusListeners.delete(fn)
+  }
+
+  /** Mic on/off, including involuntary drops (device unplugged/lost) that the UI
+   *  must reflect — it can't observe the internal disableMic() otherwise. */
+  onMic(fn: MicListener): () => void {
+    this.micListeners.add(fn)
+    return () => this.micListeners.delete(fn)
+  }
+
+  /** Fires when the browser suspends/resumes the AudioContext out from under us
+   *  (tab backgrounded, iOS interruption). A suspended context is silent but still
+   *  reports status 'running', so the UI needs this to offer a resume gesture. */
+  onSuspend(fn: SuspendListener): () => void {
+    this.suspendListeners.add(fn)
+    return () => this.suspendListeners.delete(fn)
+  }
+
+  private notifyMic(on: boolean): void {
+    for (const fn of this.micListeners) fn(on)
+  }
+
+  private notifySuspended(suspended: boolean): void {
+    for (const fn of this.suspendListeners) fn(suspended)
   }
 
   private setStatus(status: EngineStatus, error?: string): void {
@@ -112,6 +139,12 @@ export class AudioEngine {
     this.setStatus('starting')
     const context = new AudioContext({ latencyHint: 'interactive' })
     this.context = context
+    // Reflect browser-initiated suspend/resume so the UI can surface a resume
+    // gesture; the initial suspended→running is handled by the resume() below.
+    context.onstatechange = () => {
+      if (this.context !== context) return
+      this.notifySuspended(context.state === 'suspended')
+    }
 
     try {
       await withTimeout(
@@ -286,10 +319,10 @@ export class AudioEngine {
     }
     const track = stream.getAudioTracks()[0]
     if (track && 'contentHint' in track) track.contentHint = 'music'
-    // Flush held notes if the device disconnects, and drop back to demo voice.
+    // Device disconnected/lost: drop back to the demo voice. disableMic() posts
+    // use-live-input:false and notifies mic listeners so the UI stops showing "Mic on".
     track?.addEventListener('ended', () => {
       this.disableMic()
-      this.post({ type: 'use-live-input', live: false })
     })
 
     const source = this.context.createMediaStreamSource(stream)
@@ -297,6 +330,7 @@ export class AudioEngine {
     this.micStream = stream
     this.micSource = source
     this.post({ type: 'use-live-input', live: true })
+    this.notifyMic(true)
     return true
   }
 
@@ -309,6 +343,7 @@ export class AudioEngine {
       this.micStream = null
     }
     this.post({ type: 'use-live-input', live: false })
+    this.notifyMic(false)
   }
 
   get sampleRate(): number {
@@ -399,6 +434,8 @@ export class AudioEngine {
     this.setStatus('idle')
     this.telemetryListeners.clear()
     this.statusListeners.clear()
+    this.micListeners.clear()
+    this.suspendListeners.clear()
 
     await context?.close()
   }

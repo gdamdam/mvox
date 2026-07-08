@@ -22,6 +22,7 @@ export function useEngine() {
   const [status, setStatus] = useState<EngineStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [micOn, setMicOn] = useState(false)
+  const [suspended, setSuspended] = useState(false)
   const [recording, setRecording] = useState(false)
   const telemetryRef = useRef<Telemetry>(IDLE_TELEMETRY)
   // mbus publish (see src/transport/mbus): offer the master output to the mbus
@@ -43,6 +44,10 @@ export function useEngine() {
       engine.onTelemetry((t) => {
         telemetryRef.current = t
       })
+      // Mic can drop involuntarily (device unplugged) and the context can be
+      // suspended by the browser; mirror both so the UI stays truthful.
+      engine.onMic(setMicOn)
+      engine.onSuspend(setSuspended)
       engineRef.current = engine
     }
     return engineRef.current
@@ -150,6 +155,7 @@ export function useEngine() {
     status,
     error,
     micOn,
+    suspended,
     recording,
     telemetry,
     start,

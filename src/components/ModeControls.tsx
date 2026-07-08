@@ -12,6 +12,17 @@ interface Props {
 
 const waveOptions = CARRIER_WAVES.map((w) => ({ value: w, label: w }))
 
+// Harmony intervals are stored as signed scale degrees; performers read musical
+// names far more easily than "2". n steps up a heptatonic scale is an (n+1)th,
+// with 7 steps = an octave. Indexed by absolute degree (0..14, matching RANGES).
+const INTERVAL_NAMES = ['unison', '2nd', '3rd', '4th', '5th', '6th', '7th', 'octave', '9th', '10th', '11th', '12th', '13th', '14th', '15th']
+function intervalName(degree: number): string {
+  const n = Math.abs(degree)
+  const base = INTERVAL_NAMES[n] ?? `${n + 1}th`
+  if (degree === 0) return base
+  return `${degree > 0 ? '+' : '−'}${base}`
+}
+
 export function ModeControls({ patch, update }: Props) {
   switch (patch.mode) {
     case 'vocoder': {
@@ -37,7 +48,7 @@ export function ModeControls({ patch, update }: Props) {
           <Knob label="Detune" min={0} max={50} unit="¢" value={h.detune} onChange={(x) => update((p) => { p.harmony.detune = x })} />
           <Knob label="Formant" min={0} max={1} value={h.formantPreserve} onChange={(x) => update((p) => { p.harmony.formantPreserve = x })} />
           {h.intervals.map((iv, i) => (
-            <Knob key={i} label={`Int ${i + 1}`} title={`Harmony interval ${i + 1} in scale degrees`} min={-14} max={14} step={1} value={iv} onChange={(x) => update((p) => { p.harmony.intervals[i] = x })} />
+            <Knob key={i} label={`Int ${i + 1}`} title={`Harmony voice ${i + 1} interval (− is below the sung note)`} min={-14} max={14} step={1} value={iv} format={intervalName} onChange={(x) => update((p) => { p.harmony.intervals[i] = x })} />
           ))}
         </div>
       )

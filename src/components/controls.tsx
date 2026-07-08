@@ -12,11 +12,13 @@ interface KnobProps {
   unit?: string
   /** Plain-language tooltip for terse labels. */
   title?: string
+  /** Optional value formatter — e.g. render scale degrees as musical names. */
+  format?: (v: number) => string
   onChange: (v: number) => void
 }
 
-export function Knob({ label, value, min, max, step, unit, title, onChange }: KnobProps) {
-  const display = Number.isInteger(value) ? value.toString() : value.toFixed(2)
+export function Knob({ label, value, min, max, step, unit, title, format, onChange }: KnobProps) {
+  const display = format ? format(value) : Number.isInteger(value) ? value.toString() : value.toFixed(2)
   return (
     <label className="knob" title={title}>
       <span className="knob__label">{label}</span>
