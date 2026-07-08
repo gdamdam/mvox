@@ -61,6 +61,14 @@ export class MvoxEngineCore {
   private demoPos = 0
   private bpm = 120
 
+  // Mode-switch crossfade: keep rendering the OLD mode while fading its output to
+  // silence, swap the DSP state at the zero point, then fade the NEW mode back
+  // in — so changing engines is a smooth transition, not an instant click.
+  private renderMode: EngineMode = DEFAULT_PATCH.mode
+  private fadeGain = 1
+  private fadeDir = 0 // -1 = fading out to the swap, +1 = fading in, 0 = steady
+  private readonly fadeStep: number
+
   private readonly carrier: CarrierSynth
   private readonly pitch: PitchTracker
   private readonly fx: FxChain
@@ -102,6 +110,9 @@ export class MvoxEngineCore {
   private voiceScratch = new Float32Array(0)
 
   constructor(private readonly sampleRate: number) {
+    // ~8 ms per fade leg: fast enough to feel instant, slow enough to de-click.
+    this.fadeStep = 1 / Math.max(1, Math.round(0.008 * sampleRate))
+    this.renderMode = this.patch.mode
     this.carrier = new CarrierSynth(sampleRate)
     this.followSynth = new CarrierSynth(sampleRate)
     this.pitch = new PitchTracker(sampleRate, { minHz: 70, maxHz: 1000, frameSize: 1024 })
@@ -139,8 +150,12 @@ export class MvoxEngineCore {
     this.fx.setParams(patch.fx, this.bpm)
     if (bandsChanged) this.configureBands(patch.vocoder.bands, patch.vocoder.release)
     // Entering a mode must not resume from another visit's stale ring buffers /
-    // envelopes — that reads as a click or brief warble on the first block.
-    if (modeChanged) this.resetModeState()
+    // envelopes — that reads as a click or brief warble on the first block. Rather
+    // than reset instantly (an audible jump), start a fade-out; process() swaps the
+    // DSP state at silence and fades the new mode in. renderMode keeps rendering the
+    // outgoing engine until the swap, and picks up this.patch.mode when it lands, so
+    // rapid switching always settles on the latest selection.
+    if (modeChanged && patch.mode !== this.renderMode) this.fadeDir = -1
   }
 
   setTempo(bpm: number): void {
@@ -243,7 +258,6 @@ export class MvoxEngineCore {
    */
   process(input: Float32Array, outL: Float32Array, outR: Float32Array): EngineTelemetry {
     const n = outL.length
-    const mode = this.patch.mode
 
     // Assemble the voice block (live input or demo loop) + track pitch + level.
     if (this.voiceScratch.length !== n) this.voiceScratch = new Float32Array(n)
@@ -260,7 +274,7 @@ export class MvoxEngineCore {
     let peak = 0
     for (let i = 0; i < n; i += 1) {
       let mono = 0
-      switch (mode) {
+      switch (this.renderMode) {
         case 'vocoder':
           mono = this.processVocoder(voice[i])
           break
@@ -273,6 +287,24 @@ export class MvoxEngineCore {
         case 'follow':
           mono = this.processFollow(voice[i], pitchResult.f0, pitchResult.confidence)
           break
+      }
+      // Mode-switch crossfade envelope, applied to the engine voice (not the FX
+      // tail, which is left to ring across the swap for a smoother transition).
+      mono *= this.fadeGain
+      if (this.fadeDir < 0) {
+        this.fadeGain -= this.fadeStep
+        if (this.fadeGain <= 0) {
+          this.fadeGain = 0
+          this.resetModeState()
+          this.renderMode = this.patch.mode
+          this.fadeDir = 1
+        }
+      } else if (this.fadeDir > 0) {
+        this.fadeGain += this.fadeStep
+        if (this.fadeGain >= 1) {
+          this.fadeGain = 1
+          this.fadeDir = 0
+        }
       }
       // Optional dry-voice monitor mix (off by default).
       mono += voice[i] * this.patch.shared.monitorMix

@@ -101,33 +101,94 @@ export default function App() {
     setTempoText(String(next))
   }, [tempoText, tempo])
 
+  // Hands-free hold state. Refs (not state) so the note callbacks stay identity-
+  // stable and always read the current hold mode without re-subscribing the
+  // keyboard/MIDI; `latch` mirrors latchRef into state only for the button UI.
+  const [latch, setLatch] = useState(false)
+  const heldRef = useRef<Set<number>>(new Set())
+  const latchRef = useRef(false)
+  const sustainRef = useRef(false)
+  const sustainedRef = useRef<Set<number>>(new Set())
+  // heldRef is the source of truth for what's sounding; mirror it into state so
+  // the on-screen keyboard highlights stay in sync (side effects stay out of the
+  // state updater, which React may run twice).
+  const syncActiveNotes = useCallback(() => {
+    setActiveNotes(new Set(heldRef.current))
+  }, [])
+
   // Note handlers shared by computer keys, MIDI, and the on-screen keyboard.
   const noteOn = useCallback(
     (midi: number, velocity: number) => {
       // Ignore input before audio runs (the on-screen keys are always rendered),
       // otherwise a pre-start click latches the key highlight with no sound.
       if (engine.status !== 'running') return
+      // In latch mode, re-pressing a held note toggles it off — hands-free chord
+      // building without needing to keep keys down while singing.
+      if (latchRef.current && heldRef.current.has(midi)) {
+        engine.noteOff(midi)
+        heldRef.current.delete(midi)
+        sustainedRef.current.delete(midi)
+        syncActiveNotes()
+        return
+      }
       engine.noteOn(midi, velocity)
-      setActiveNotes((prev) => new Set(prev).add(midi))
+      heldRef.current.add(midi)
+      sustainedRef.current.delete(midi)
+      syncActiveNotes()
     },
-    [engine],
+    [engine, syncActiveNotes],
   )
   const noteOff = useCallback(
     (midi: number) => {
+      // Latch keeps the note held until it's toggled off or cleared; the sustain
+      // pedal defers the release until the pedal lifts. Otherwise release now.
+      if (latchRef.current) return
+      if (sustainRef.current) {
+        sustainedRef.current.add(midi)
+        return
+      }
       engine.noteOff(midi)
-      setActiveNotes((prev) => {
-        const next = new Set(prev)
-        next.delete(midi)
-        return next
-      })
+      heldRef.current.delete(midi)
+      syncActiveNotes()
     },
-    [engine],
+    [engine, syncActiveNotes],
   )
+
+  // Sustain (damper) pedal from MIDI CC 64: while down, note-offs are deferred;
+  // when it lifts, every note released during the hold is finally stopped.
+  const setSustain = useCallback(
+    (on: boolean) => {
+      sustainRef.current = on
+      if (on) return
+      for (const midi of sustainedRef.current) {
+        engine.noteOff(midi)
+        heldRef.current.delete(midi)
+      }
+      sustainedRef.current.clear()
+      syncActiveNotes()
+    },
+    [engine, syncActiveNotes],
+  )
+
+  const toggleLatch = useCallback(() => {
+    const next = !latchRef.current
+    latchRef.current = next
+    setLatch(next)
+    // Turning latch off releases the held chord so notes don't hang indefinitely.
+    if (!next) {
+      for (const midi of heldRef.current) engine.noteOff(midi)
+      heldRef.current.clear()
+      sustainedRef.current.clear()
+      syncActiveNotes()
+    }
+  }, [engine, syncActiveNotes])
 
   const kbd = useKeyboard({ onNoteOn: noteOn, onNoteOff: noteOff, enabled: engine.status === 'running' })
 
   const panic = useCallback(() => {
     engine.panic()
+    heldRef.current.clear()
+    sustainedRef.current.clear()
     setActiveNotes(new Set())
   }, [engine])
 
@@ -156,12 +217,13 @@ export default function App() {
       midiUnsub.current = router.onNote((e) => {
         if (e.type === 'noteon') noteOn(e.note, e.velocity)
         else if (e.type === 'noteoff') noteOff(e.note)
+        else if (e.type === 'sustain') setSustain(e.on)
       })
       setMidiOn(true)
     } finally {
       midiInFlight.current = false
     }
-  }, [midiOn, noteOn, noteOff])
+  }, [midiOn, noteOn, noteOff, setSustain])
 
   const confirmMic = useCallback(async () => {
     setShowMicWarn(false)
@@ -284,6 +346,15 @@ export default function App() {
             </span>
             <button type="button" className={`btn ${midiOn ? 'btn--on' : ''}`} onClick={toggleMidi}>
               MIDI
+            </button>
+            <button
+              type="button"
+              className={`btn ${latch ? 'btn--on' : ''}`}
+              aria-pressed={latch}
+              onClick={toggleLatch}
+              title="Latch: hold notes hands-free (a sustain pedal also works). Press a held note again to release it."
+            >
+              {latch ? '⤾ Latch on' : '⤾ Latch'}
             </button>
             <button type="button" className={`btn ${engine.recording ? 'btn--rec' : ''}`} onClick={record}>
               {engine.recording ? '⏺ Stop & save' : '⏺ Record'}

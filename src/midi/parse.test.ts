@@ -25,8 +25,24 @@ describe('parseMidi', () => {
     expect(e.note).toBe(60)
   })
 
-  it('maps Control Change (and other non-note messages) to other', () => {
+  it('maps non-sustain Control Change (and other non-note messages) to other', () => {
     expect(parseMidi([0xb0, 7, 100]).type).toBe('other')
+  })
+
+  it('decodes the sustain pedal (CC 64) with the >= 64 on-threshold', () => {
+    const down = parseMidi([0xb0, 64, 127])
+    expect(down.type).toBe('sustain')
+    if (down.type !== 'sustain') throw new Error('expected sustain')
+    expect(down.on).toBe(true)
+    // Exactly 64 is "on" per MIDI convention; 63 and 0 are "off".
+    expect(parseMidi([0xb0, 64, 64])).toEqual({ type: 'sustain', on: true })
+    expect(parseMidi([0xb0, 64, 63])).toEqual({ type: 'sustain', on: false })
+    expect(parseMidi([0xb0, 64, 0])).toEqual({ type: 'sustain', on: false })
+  })
+
+  it('decodes sustain regardless of channel and treats a truncated CC as other', () => {
+    expect(parseMidi([0xb5, 64, 127])).toEqual({ type: 'sustain', on: true })
+    expect(parseMidi([0xb0, 64]).type).toBe('other')
   })
 
   it('maps empty and too-short buffers to other', () => {

@@ -160,11 +160,12 @@ export class MidiRouter {
   /** Decode an inbound buffer and fan it out to listeners. */
   private handleInputData(data: Uint8Array | number[]): void {
     const event = parseMidi(data)
-    // Silently drop non-note traffic so subscribers only see note on/off.
+    // Silently drop traffic that isn't a note or the sustain pedal.
     if (event.type === 'other') return
     // Track held notes so we can release them if the input vanishes mid-hold.
+    // Sustain events carry no note and don't affect that tracking.
     if (event.type === 'noteon') this.activeNotes.add(event.note)
-    else this.activeNotes.delete(event.note)
+    else if (event.type === 'noteoff') this.activeNotes.delete(event.note)
     for (const cb of this.noteCbs) cb(event)
   }
 

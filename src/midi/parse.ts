@@ -12,6 +12,11 @@
 // Status nibbles
 const NOTE_OFF = 0x80
 const NOTE_ON = 0x90
+const CONTROL_CHANGE = 0xb0
+// Continuous controller number for the sustain (damper) pedal.
+const CC_SUSTAIN = 0x40
+// MIDI CC convention: >= 64 is "on" (pedal down), < 64 is "off".
+const CC_ON_THRESHOLD = 64
 
 /**
  * A decoded inbound MIDI event. `note` is clamped to 0..127 and `velocity` is
@@ -21,6 +26,7 @@ const NOTE_ON = 0x90
 export type MidiEvent =
   | { type: 'noteon'; note: number; velocity: number }
   | { type: 'noteoff'; note: number }
+  | { type: 'sustain'; on: boolean }
   | { type: 'other' }
 
 /**
@@ -28,7 +34,8 @@ export type MidiEvent =
  *
  * - Note On with velocity 0 → `noteoff` (running-status convention).
  * - Note Off → `noteoff`.
- * - Everything else (CC, aftertouch, pitch bend, clock, SysEx) → `other`.
+ * - CC 64 (sustain/damper pedal) → `sustain` (on when value >= 64).
+ * - Everything else (other CCs, aftertouch, pitch bend, clock, SysEx) → `other`.
  *
  * Tolerates empty/short/junk buffers: a buffer that does not begin with a
  * status byte, or has no decodable note type, returns `{ type: 'other' }`.
@@ -63,6 +70,13 @@ export function parseMidi(data: Uint8Array | number[]): MidiEvent {
       if (data.length < 3) return { type: 'other' }
       const note = data[1] & 0x7f
       return { type: 'noteoff', note }
+    }
+    case CONTROL_CHANGE: {
+      // CC carries status + controller + value. Only the sustain pedal is acted
+      // on; every other controller stays 'other' so subscribers ignore it.
+      if (data.length < 3) return { type: 'other' }
+      if ((data[1] & 0x7f) !== CC_SUSTAIN) return { type: 'other' }
+      return { type: 'sustain', on: (data[2] & 0x7f) >= CC_ON_THRESHOLD }
     }
     default:
       return { type: 'other' }
