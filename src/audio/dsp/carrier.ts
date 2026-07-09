@@ -155,7 +155,9 @@ export class CarrierSynth {
         x ^= x >>> 17
         x ^= x << 5
         v.noiseState = x
-        return (x / 0x7fffffff) % 1
+        // x is a full-range int32; map to ~[-1, 1). The old `% 1` was a no-op
+        // for in-range values and silently zeroed the ±full-scale endpoints.
+        return x / 0x7fffffff
       }
     }
   }

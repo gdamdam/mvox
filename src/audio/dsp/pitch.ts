@@ -168,7 +168,12 @@ export function yinDetect(
       subTau = half + 1;
       subVal = cmnd[half + 1];
     }
-    if (subVal < cmnd[bestTau] + OCTAVE_MARGIN) {
+    // Only drop the octave when the half-period is itself a genuine dip (below
+    // the absolute threshold). Comparing to cmnd[bestTau] alone lets a merely
+    // "comparably shallow" half-lag win even when it is above threshold, which
+    // halves the period of a real fundamental that happens to carry a strong
+    // 2nd harmonic — an octave-too-high reading.
+    if (subVal < threshold && subVal < cmnd[bestTau] + OCTAVE_MARGIN) {
       bestTau = subTau;
     } else {
       break;

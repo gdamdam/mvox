@@ -133,7 +133,11 @@ export class MvoxEngineCore {
     this.renderMode = this.patch.mode
     this.carrier = new CarrierSynth(sampleRate)
     this.followSynth = new CarrierSynth(sampleRate)
-    this.pitch = new PitchTracker(sampleRate, { minHz: 70, maxHz: 1000, frameSize: 1024 })
+    // frameSize 2048 is required to reach minHz=70: the YIN window is half the
+    // frame, so a 1024 frame floors detection at ~94 Hz (48k) and never tracks
+    // low male fundamentals (E2/F2). hopSize stays at 512 so a longer analysis
+    // window does not slow the estimate cadence (~11 ms) that FOLLOW/HARMONY need.
+    this.pitch = new PitchTracker(sampleRate, { minHz: 70, maxHz: 1000, frameSize: 2048, hopSize: 512 })
     this.fx = new FxChain(sampleRate)
 
     for (let i = 0; i < MAX_BANDS; i += 1) {

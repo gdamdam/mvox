@@ -98,6 +98,30 @@ describe('yinDetect', () => {
     expect(Math.abs(r.f0 - 440)).toBeGreaterThan(20);
   });
 
+  it('does not octave-up a weak fundamental carrying a strong 2nd harmonic', () => {
+    // Regression: the sub-octave guard used to halve bestTau whenever the
+    // half-period CMND was merely "comparably shallow", even when that half-lag
+    // sat ABOVE the absolute threshold (i.e. not a real periodicity). A 180 Hz
+    // tone with a dominant 2nd harmonic + noise then read as 360 Hz. The guard
+    // now requires the half-period dip to be sub-threshold.
+    const sr = 48000;
+    const f = 180;
+    const n = 2048;
+    const sig = new Float32Array(n);
+    let s = 0x9e37 >>> 0;
+    for (let i = 0; i < n; i++) {
+      let v = 0.15 * Math.sin((2 * Math.PI * f * i) / sr); // weak fundamental
+      v += 0.6 * Math.sin((2 * Math.PI * 2 * f * i) / sr); // strong 2nd harmonic
+      s = (s * 1664525 + 1013904223) >>> 0;
+      v += 0.3 * (s / 2147483648 - 1); // deterministic noise
+      sig[i] = v;
+    }
+    const r = yinDetect(sig, sr, { minHz: 70, maxHz: 1000 });
+    expectFiniteBounded(r);
+    expectWithinPercent(r.f0, f, 8);
+    expect(Math.abs(r.f0 - 2 * f)).toBeGreaterThan(f * 0.2);
+  });
+
   it('reports white noise as unvoiced (low confidence / no pitch)', () => {
     const r = yinDetect(synthNoise(2048), SR);
     expectFiniteBounded(r);
@@ -161,6 +185,20 @@ describe('PitchTracker', () => {
       expect(f).toBeGreaterThan(180);
       expect(f).toBeLessThan(430);
     }
+  });
+
+  it('tracks a low male fundamental (E2 ~82 Hz) with a 2048 frame', () => {
+    // A 1024 frame floors detection at ~86 Hz (44.1k) and misses E2/F2 entirely;
+    // frameSize 2048 (window = 1024) is needed to reach the engine's minHz=70.
+    const e2 = 82.41;
+    const tracker = new PitchTracker(SR, { minHz: 70, maxHz: 1000, frameSize: 2048, hopSize: 512 });
+    let r: PitchResult = { f0: 0, confidence: 0 };
+    // Feed enough blocks to fill a full frame and settle.
+    for (let i = 0; i < 8; i++) r = tracker.process(synthSine(e2, SR, 1024));
+    expect(r.f0).toBeGreaterThan(0);
+    // Resolution at the very bottom of the range is coarse (period ~535 samples);
+    // 6% still confirms the fundamental rather than an octave error or noise.
+    expectWithinPercent(r.f0, e2, 6);
   });
 
   it('produces identical results on repeated identical input', () => {
