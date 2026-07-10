@@ -137,14 +137,26 @@ export async function idbListPresets(): Promise<UserPreset[]> {
     // string ids (randomId), so these are foreign/corrupt records we shouldn't
     // surface. This also avoids collapsing several bad rows onto a duplicate ""
     // id. Migrating the DB to repair keys would require a version bump.
-    return rows
-      .filter((row): row is UserPreset => typeof row?.id === "string")
-      .map((row) => ({
-        id: row.id,
-        name: typeof row?.name === "string" ? row.name : "Preset",
-        createdAt: typeof row?.createdAt === "number" ? row.createdAt : 0,
-        patch: migratePatch(row?.patch),
-      }));
+    const out: UserPreset[] = [];
+    for (const row of rows) {
+      if (typeof row?.id !== "string") continue;
+      try {
+        out.push({
+          id: row.id,
+          name: typeof row?.name === "string" ? row.name : "Preset",
+          createdAt: typeof row?.createdAt === "number" ? row.createdAt : 0,
+          // migratePatch throws on a future-version record; catching PER ROW keeps
+          // one preset saved by a newer build from hiding every valid preset. The
+          // bad row is left on disk (a later newer build can still read it) — we
+          // neither surface nor destroy it.
+          patch: migratePatch(row?.patch),
+        });
+      } catch {
+        // Skip this row only; a partial/corrupt/future record must not blank the
+        // whole list.
+      }
+    }
+    return out;
   } catch {
     return [];
   }

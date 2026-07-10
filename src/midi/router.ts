@@ -74,6 +74,13 @@ export class MidiRouter {
   // input switch, hot-unplug, or dispose — so nothing sticks on (M6).
   private readonly activeNotes = new Set<number>()
 
+  // Whether the sustain (damper) pedal is currently down on the open input. When
+  // the source drops out (switch / unplug / dispose) the physical pedal can no
+  // longer send its pedal-up, so we synthesize one — otherwise a subscriber that
+  // defers note-offs while sustained (see App.setSustain) never releases them
+  // and the note hangs even though we flushed activeNotes.
+  private sustainOn = false
+
   /** True when Web MIDI is reachable in this environment. */
   static isSupported(): boolean {
     return (
@@ -166,11 +173,21 @@ export class MidiRouter {
     // Sustain events carry no note and don't affect that tracking.
     if (event.type === 'noteon') this.activeNotes.add(event.note)
     else if (event.type === 'noteoff') this.activeNotes.delete(event.note)
+    else if (event.type === 'sustain') this.sustainOn = event.on
     for (const cb of this.noteCbs) cb(event)
   }
 
-  /** Emit a synthetic note-off for every held note, then forget them. */
+  /**
+   * Release everything the source can no longer release when it drops out from
+   * under a held key (input switch, hot-unplug, dispose). Lift a held sustain
+   * pedal FIRST — so a subscriber deferring note-offs while sustained clears that
+   * state before the note-offs land — then synthesize a note-off per held note.
+   */
   private flushActiveNotes(): void {
+    if (this.sustainOn) {
+      this.sustainOn = false
+      for (const cb of this.noteCbs) cb({ type: 'sustain', on: false })
+    }
     if (this.activeNotes.size === 0) return
     for (const note of this.activeNotes) {
       for (const cb of this.noteCbs) cb({ type: 'noteoff', note })

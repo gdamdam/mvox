@@ -197,6 +197,26 @@ describe("L16: non-string keys", () => {
   });
 });
 
+describe("one throwing row must not hide all presets", () => {
+  it("skips a future-version preset but still lists the valid ones", async () => {
+    // migratePatch throws on a patch whose version is newer than we support (a
+    // preset written by a later build). Listing must skip just that row, not
+    // collapse the whole batch to [] and hide every valid preset.
+    const data = new Map<unknown, { id: unknown; [k: string]: unknown }>([
+      ["future", { id: "future", name: "Newer", createdAt: 1, patch: { version: 999 } }],
+      ["ok", { id: "ok", name: "Valid", createdAt: 2, patch: makePatch() }],
+    ]);
+    const fake = createFakeIDB(data);
+    vi.stubGlobal("indexedDB", fake.indexedDB);
+
+    const list = await idbListPresets();
+    expect(list.map((x) => x.id)).toEqual(["ok"]);
+    // The future record is preserved on disk (a later build can still read it),
+    // neither surfaced nor destroyed.
+    expect(fake.data.has("future")).toBe(true);
+  });
+});
+
 describe("L15: synchronous throw inside the transaction helper", () => {
   it("closes the db when a store op throws synchronously", async () => {
     const fake = createFakeIDB(new Map(), { throwOnPut: true });

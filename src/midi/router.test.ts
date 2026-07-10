@@ -49,6 +49,8 @@ function stubMidi(access: FakeAccess): void {
 
 const NOTE_ON = 0x90
 const NOTE_OFF = 0x80
+const CONTROL_CHANGE = 0xb0
+const CC_SUSTAIN = 64
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -140,6 +142,46 @@ describe('MidiRouter', () => {
 
     router.dispose()
     expect(events).toEqual([{ type: 'noteoff', note: 55 }])
+  })
+
+  it('lifts a held sustain pedal BEFORE flushing notes on hot-unplug', async () => {
+    // With the pedal down, a subscriber defers note-offs until pedal-up. If the
+    // device vanishes it can never send pedal-up, so the router must synthesize
+    // one — and emit it before the note-offs so the deferral clears first.
+    const router = new MidiRouter()
+    const events: MidiEvent[] = []
+    router.onNote((e) => events.push(e))
+    await router.init()
+
+    input.send([NOTE_ON, 60, 100])
+    input.send([CONTROL_CHANGE, CC_SUSTAIN, 127]) // pedal down
+    events.length = 0
+
+    access.inputs.map.delete('in-1')
+    access.emitStateChange()
+
+    expect(events).toEqual([
+      { type: 'sustain', on: false },
+      { type: 'noteoff', note: 60 },
+    ])
+  })
+
+  it('lifts a held sustain pedal on dispose even with no notes still held', async () => {
+    // Key released while sustained: activeNotes is already empty, but the
+    // subscriber is still holding that note. The synthetic pedal-up is what
+    // releases it, so it must fire regardless of activeNotes being empty.
+    const router = new MidiRouter()
+    const events: MidiEvent[] = []
+    router.onNote((e) => events.push(e))
+    await router.init()
+
+    input.send([CONTROL_CHANGE, CC_SUSTAIN, 127]) // pedal down
+    input.send([NOTE_ON, 62, 90])
+    input.send([NOTE_OFF, 62, 0]) // released while sustained
+    events.length = 0
+
+    router.dispose()
+    expect(events).toEqual([{ type: 'sustain', on: false }])
   })
 
   it('a disposed router does not re-open — a fresh one must be created (M4)', async () => {

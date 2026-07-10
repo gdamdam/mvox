@@ -286,20 +286,24 @@ export class FxChain {
     r = r * (1 - this.delayMix) + dr * this.delayMix;
 
     // --- 4. reverb (Freeverb) ------------------------------------------------
-    // reverbWet == 0 gives exact dry passthrough. The comb bank sums in parallel;
-    // the allpasses are chained in series to diffuse it.
+    // The comb bank sums in parallel; the allpasses are chained in series to
+    // diffuse it. The bank ALWAYS runs so its buffers track the current signal:
+    // gating the whole bank on reverbWet>0 froze the tail at the instant reverb
+    // was turned down to 0 and then replayed that stale, unrelated content when
+    // it was raised again (a click/swell on re-enable or preset change). Only the
+    // wet MIX is gated, so reverbWet == 0 stays bit-exact dry passthrough.
+    const inMono = (l + r) * REVERB_FIXED_GAIN;
+    let revL = 0;
+    let revR = 0;
+    for (let i = 0; i < this.combsL.length; i++) {
+      revL += this.combsL[i].process(inMono);
+      revR += this.combsR[i].process(inMono);
+    }
+    for (let i = 0; i < this.allpassL.length; i++) {
+      revL = this.allpassL[i].process(revL);
+      revR = this.allpassR[i].process(revR);
+    }
     if (this.reverbWet > 0) {
-      const inMono = (l + r) * REVERB_FIXED_GAIN;
-      let revL = 0;
-      let revR = 0;
-      for (let i = 0; i < this.combsL.length; i++) {
-        revL += this.combsL[i].process(inMono);
-        revR += this.combsR[i].process(inMono);
-      }
-      for (let i = 0; i < this.allpassL.length; i++) {
-        revL = this.allpassL[i].process(revL);
-        revR = this.allpassR[i].process(revR);
-      }
       l = l * (1 - this.reverbWet) + revL * this.reverbWet;
       r = r * (1 - this.reverbWet) + revR * this.reverbWet;
     }

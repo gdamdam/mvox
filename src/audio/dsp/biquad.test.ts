@@ -150,4 +150,18 @@ describe("reset", () => {
     const second = run();
     expect(second).toEqual(first);
   });
+
+  it("flushes decaying state to exactly zero after a long silence", () => {
+    // Regression: DF2T state used to decay geometrically into the denormal range
+    // and linger there forever. On x86 without FTZ that means every subsequent
+    // silent sample runs 10-100× slower — a CPU spike after a tail. The flush
+    // snaps sub-1e-15 state to 0, so output reaches EXACTLY zero. Without it, a
+    // high-Q filter settles to a tiny nonzero denormal (~1e-57 here), never 0.
+    const bq = new Biquad();
+    bq.setCoeffs(bandpassCoeffs(FS, 200, 20)); // high Q → long ring-down
+    bq.process(1); // impulse
+    let y = 1;
+    for (let i = 0; i < 200000; i++) y = bq.process(0);
+    expect(y).toBe(0);
+  });
 });

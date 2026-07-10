@@ -245,4 +245,34 @@ describe("reset", () => {
     const second = run();
     expect(second).toEqual(first);
   });
+
+  it("does not resurrect a frozen reverb tail after bypass", () => {
+    // Regression: the comb/allpass bank only ran while reverbWet>0, so turning
+    // reverb to 0 FROZE the buffers mid-tail; re-enabling later replayed that
+    // stale, unrelated content as an audible burst/click. The bank now always
+    // advances, so a re-enable after a long silence is (near-)silent.
+    const chain = new FxChain(FS);
+    chain.setParams(withParams({ reverb: 0.7 }), 120);
+    chain.process(1, 1); // impulse into the reverb
+    for (let i = 0; i < 2000; i++) chain.process(0, 0); // develop a tail
+    // Reverb fully off; sit in silence for ~1 s.
+    chain.setParams(withParams({ reverb: 0 }), 120);
+    for (let i = 0; i < FS; i++) chain.process(0, 0);
+    // Re-enable: with the bug the 1-second-old frozen tail bursts out here.
+    chain.setParams(withParams({ reverb: 0.5 }), 120);
+    let p = 0;
+    for (let i = 0; i < 4000; i++) {
+      chain.process(0, 0);
+      p = Math.max(p, Math.abs(chain.outL), Math.abs(chain.outR));
+    }
+    expect(p).toBeLessThan(1e-3);
+  });
+
+  it("reverb == 0 is bit-exact dry passthrough even though the bank runs", () => {
+    // The always-on bank must not leak into the dry signal when wet is 0.
+    const sig = noise(1024);
+    const dry = runL(neutral(), 120, sig);
+    const withZeroReverb = runL(withParams({ reverb: 0 }), 120, sig);
+    expect(withZeroReverb).toEqual(dry);
+  });
 });

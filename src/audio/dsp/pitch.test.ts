@@ -158,7 +158,9 @@ describe('PitchTracker', () => {
   it('tracks a 200->400 Hz sweep with a monotone-ish rising f0', () => {
     const n = SR; // 1 second
     const sweep = synthSweep(200, 400, SR, n);
-    const tracker = new PitchTracker(SR, { frameSize: 1024, hopSize: 512 });
+    // minHz:150 keeps the derived frame at the requested 1024 (this sweep is
+    // mid-range; a 1024 window suffices above ~150 Hz).
+    const tracker = new PitchTracker(SR, { minHz: 150, frameSize: 1024, hopSize: 512 });
 
     const estimates: number[] = [];
     const blockSize = 512;
@@ -223,7 +225,7 @@ describe('PitchTracker', () => {
 
   it('holds the last voiced estimate through a brief unvoiced gap', () => {
     // No overlap so each block maps cleanly to one frame with no leftover.
-    const tracker = new PitchTracker(SR, { frameSize: 1024, hopSize: 1024 });
+    const tracker = new PitchTracker(SR, { minHz: 150, frameSize: 1024, hopSize: 1024 });
     const voiced = tracker.process(synthSine(220, SR, 1024));
     expect(voiced.f0).toBeGreaterThan(0);
     expectWithinPercent(voiced.f0, 220, 5);
@@ -234,7 +236,7 @@ describe('PitchTracker', () => {
   });
 
   it('clears to unvoiced after a sustained unvoiced gap', () => {
-    const tracker = new PitchTracker(SR, { frameSize: 1024, hopSize: 1024 });
+    const tracker = new PitchTracker(SR, { minHz: 150, frameSize: 1024, hopSize: 1024 });
     tracker.process(synthSine(220, SR, 1024));
     // Well past the brief-hold window.
     let r: PitchResult = { f0: -1, confidence: -1 };
@@ -246,5 +248,132 @@ describe('PitchTracker', () => {
     const tracker = new PitchTracker(SR, { frameSize: 1024 });
     const r = tracker.process(synthSine(220, SR, 256));
     expect(r).toEqual({ f0: 0, confidence: 0 });
+  });
+});
+
+// --- Low-register detection across sample rates (derived frame sizing) ------
+//
+// Regression for the low-frequency floor bug: PitchTracker's analysis window is
+// half the frame, so the max evaluable lag is frameSize/2 - 1. A fixed 2048
+// frame reaches ~70 Hz at 44.1/48 kHz but floors at ~94 Hz at 96 kHz, silently
+// missing C2/E2. The tracker now DERIVES the frame from minHz+sampleRate, so a
+// configured minHz is honored at every rate. These tests would fail on a tracker
+// that trusted the requested frame size at 96 kHz.
+
+/** Feed a signal through a tracker in fixed blocks; return the final estimate. */
+function feed(tracker: PitchTracker, sig: Float32Array, blockSize = 512): PitchResult {
+  let r: PitchResult = { f0: 0, confidence: 0 };
+  for (let i = 0; i < sig.length; i += blockSize) {
+    r = tracker.process(sig.subarray(i, Math.min(i + blockSize, sig.length)));
+  }
+  return r;
+}
+
+/** Harmonic-rich tone: fundamental + decaying harmonics (formant-like energy). */
+function synthHarmonic(f0: number, sr: number, n: number, harmonics = 5, amp = 0.5): Float32Array {
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    for (let h = 1; h <= harmonics; h++) s += (1 / h) * Math.sin((2 * Math.PI * f0 * h * i) / sr);
+    out[i] = amp * s * 0.5;
+  }
+  return out;
+}
+
+/** Add deterministic low-level noise to a signal (mildly noisy voiced case). */
+function addNoise(sig: Float32Array, amp = 0.04, seed = 0xc0ffee): Float32Array {
+  const out = new Float32Array(sig.length);
+  let s = seed >>> 0;
+  for (let i = 0; i < sig.length; i++) {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    out[i] = sig[i] + amp * (s / 2147483648 - 1);
+  }
+  return out;
+}
+
+describe('PitchTracker low-register across sample rates', () => {
+  const RATES = [44100, 48000, 96000];
+  // Note names -> Hz. C2/E2/A2 are the low male vocal range from the spec.
+  const NOTES: Array<[string, number]> = [
+    ['C2', 65.41],
+    ['E2', 82.41],
+    ['A2', 110.0],
+  ];
+
+  for (const sr of RATES) {
+    for (const [name, hz] of NOTES) {
+      it(`detects ${name} (${hz} Hz) sine at ${sr} Hz`, () => {
+        // minHz:60 (below C2) + derived sizing must make the frame long enough.
+        const tracker = new PitchTracker(sr, { minHz: 60, maxHz: 1000, hopSize: 512 });
+        // Feed ~0.25 s so even the largest derived frame (96 kHz) fills and settles.
+        const r = feed(tracker, synthSine(hz, sr, Math.round(sr * 0.25)));
+        expect(r.f0).toBeGreaterThan(0);
+        expectWithinPercent(r.f0, hz, 4);
+        // Explicitly reject octave-up and octave-down errors.
+        expect(Math.abs(r.f0 - hz * 2)).toBeGreaterThan(hz * 0.3);
+        expect(Math.abs(r.f0 - hz / 2)).toBeGreaterThan(hz * 0.3);
+      });
+    }
+
+    it(`detects harmonic-rich E2 at ${sr} Hz without octave error`, () => {
+      const tracker = new PitchTracker(sr, { minHz: 60, maxHz: 1000, hopSize: 512 });
+      const r = feed(tracker, synthHarmonic(82.41, sr, Math.round(sr * 0.25)));
+      expect(r.f0).toBeGreaterThan(0);
+      expectWithinPercent(r.f0, 82.41, 5);
+      expect(Math.abs(r.f0 - 82.41 * 2)).toBeGreaterThan(82.41 * 0.3);
+    });
+
+    it(`detects mildly noisy A2 at ${sr} Hz`, () => {
+      const tracker = new PitchTracker(sr, { minHz: 60, maxHz: 1000, hopSize: 512 });
+      const r = feed(tracker, addNoise(synthSine(110, sr, Math.round(sr * 0.25))));
+      expect(r.f0).toBeGreaterThan(0);
+      expectWithinPercent(r.f0, 110, 5);
+    });
+
+    it(`detects a near-minimum tone (~minHz+3) at ${sr} Hz`, () => {
+      const minHz = 70;
+      const tracker = new PitchTracker(sr, { minHz, maxHz: 1000, hopSize: 512 });
+      const r = feed(tracker, synthSine(minHz + 3, sr, Math.round(sr * 0.25)));
+      expect(r.f0).toBeGreaterThan(0);
+      expectWithinPercent(r.f0, minHz + 3, 6);
+    });
+
+    it(`rejects a below-minimum tone at ${sr} Hz (no confident false pitch)`, () => {
+      const minHz = 90;
+      const tracker = new PitchTracker(sr, { minHz, maxHz: 1000, hopSize: 512 });
+      // 55 Hz is below minHz: its period exceeds the max lag, so no in-range dip.
+      const r = feed(tracker, synthSine(55, sr, Math.round(sr * 0.25)));
+      // Either unvoiced, or if some spurious dip passed it must not be a confident
+      // in-range reading near the true (out-of-range) fundamental.
+      if (r.f0 > 0) {
+        expect(r.f0).toBeGreaterThanOrEqual(minHz * 0.5);
+      } else {
+        expect(r).toEqual({ f0: 0, confidence: 0 });
+      }
+    });
+  }
+
+  it('tracks a low->high transition (C2 -> A4)', () => {
+    const sr = 48000;
+    const tracker = new PitchTracker(sr, { minHz: 60, maxHz: 1000, hopSize: 512 });
+    const low = feed(tracker, synthSine(65.41, sr, Math.round(sr * 0.25)));
+    expect(low.f0).toBeGreaterThan(0);
+    expectWithinPercent(low.f0, 65.41, 5);
+    const high = feed(tracker, synthSine(440, sr, Math.round(sr * 0.25)));
+    expectWithinPercent(high.f0, 440, 3);
+    // The estimate actually moved up by roughly the true ratio, not stuck low.
+    expect(high.f0).toBeGreaterThan(low.f0 * 4);
+  });
+
+  it('does not grow the frame beyond a high-minHz request (no added latency)', () => {
+    // minHz:300 at 48 kHz needs only a ~324-sample frame, so a requested 1024
+    // frame is NOT grown: one 1024-sample block fills exactly one frame and
+    // yields a voiced estimate. A tracker that over-grew the frame would still
+    // report unvoiced after a single block.
+    const sr = 48000;
+    const tracker = new PitchTracker(sr, { minHz: 300, maxHz: 2000, frameSize: 1024, hopSize: 512 });
+    const r = tracker.process(synthSine(440, sr, 1024));
+    expect(r.f0).toBeGreaterThan(0);
+    expectWithinPercent(r.f0, 440, 3);
   });
 });

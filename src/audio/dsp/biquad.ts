@@ -18,6 +18,15 @@ export interface BiquadCoeffs {
   a2: number;
 }
 
+// Flush subnormals to zero. After input goes silent the DF2T state registers
+// decay geometrically and linger in the denormal range; on x86 without FTZ,
+// arithmetic on denormals costs 10-100× per op. A vocoder runs 60+ biquads per
+// sample, so a long silent tail could otherwise starve the audio thread. 1e-15
+// (~-300 dBFS) is far below anything audible. Mirrors fx.ts's flushDenormal.
+function flushDenormal(x: number): number {
+  return x > -1e-15 && x < 1e-15 ? 0 : x;
+}
+
 // Guard rails so a bad UI value can never produce NaN/Inf coefficients.
 // freq must sit strictly inside (0, nyquist); Q must be positive and bounded.
 const MIN_Q = 1e-4;
@@ -174,8 +183,10 @@ export class Biquad {
   //   s2 = b2*x - a2*y
   process(x: number): number {
     const y = this.b0 * x + this.s1;
-    this.s1 = this.b1 * x - this.a1 * y + this.s2;
-    this.s2 = this.b2 * x - this.a2 * y;
+    // Flush the recirculating state (not y) so a decaying tail can't leave the
+    // filter grinding on denormals through a long silence.
+    this.s1 = flushDenormal(this.b1 * x - this.a1 * y + this.s2);
+    this.s2 = flushDenormal(this.b2 * x - this.a2 * y);
     return y;
   }
 

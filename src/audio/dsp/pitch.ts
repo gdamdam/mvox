@@ -27,6 +27,14 @@ const DEFAULT_THRESHOLD = 0.15;
 const DEFAULT_FRAME_SIZE = 1024;
 
 /**
+ * Upper bound on the derived analysis frame (see PitchTracker constructor).
+ * Guards against a pathological `minHz` requesting an enormous buffer: 16384
+ * samples still reaches ~12 Hz at 96 kHz — far below any musical fundamental —
+ * so it never limits a legitimate vocal range, only absurd configurations.
+ */
+const MAX_FRAME_SIZE = 16384;
+
+/**
  * RMS below this is treated as silence. The absolute-difference function is
  * scale dependent, so an explicit energy gate is cheaper and more reliable than
  * inferring silence from the CMND curve alone.
@@ -44,12 +52,18 @@ const OCTAVE_MARGIN = 0.1;
 const UNVOICED: PitchResult = { f0: 0, confidence: 0 };
 
 /**
- * Number of consecutive unvoiced frames PitchTracker holds the last voiced
- * estimate before clearing. A single consonant / plosive between syllables
- * yields an unvoiced frame; holding across a few keeps FOLLOW gated open and
- * HARMONY voices sustained instead of flickering.
+ * How long PitchTracker holds the last voiced estimate through unvoiced frames
+ * before clearing, expressed in TIME. A single consonant / plosive between
+ * syllables yields an unvoiced frame; holding across a brief gap keeps FOLLOW
+ * gated open and HARMONY voices sustained instead of flickering.
+ *
+ * Defined in milliseconds and converted to a frame count from the actual hop
+ * (see constructor) so the musical hold duration stays stable regardless of
+ * sample rate or hop size — a frame-count constant alone would silently
+ * stretch to ~139 ms at hop=2048 or shrink to ~16 ms at 96 kHz/hop=512.
+ * 35 ms ≈ the previous default (3 hops at 512/44.1 kHz), preserving feel.
  */
-const UNVOICED_HOLD_FRAMES = 3;
+const UNVOICED_HOLD_MS = 35;
 
 function clamp(x: number, lo: number, hi: number): number {
   if (x < lo) return lo;
@@ -212,6 +226,7 @@ export class PitchTracker {
   private readonly sampleRate: number;
   private readonly frameSize: number;
   private readonly hopSize: number;
+  private readonly holdFrames: number;
   private readonly yinOpts: YinOptions;
   // Reusable scratch buffers: process() runs on the audio thread (~375×/sec), so
   // steady-state must not allocate — GC pauses there cause audible dropouts.
@@ -223,14 +238,27 @@ export class PitchTracker {
 
   constructor(sampleRate: number, opts: PitchTrackerOptions = {}) {
     this.sampleRate = sampleRate;
-    this.frameSize = Math.max(4, Math.floor(opts.frameSize ?? DEFAULT_FRAME_SIZE));
+    const requestedFrame = Math.max(4, Math.floor(opts.frameSize ?? DEFAULT_FRAME_SIZE));
+    const minHz = clamp(opts.minHz ?? DEFAULT_MIN_HZ, 1, sampleRate / 2);
+    const maxHz = clamp(opts.maxHz ?? DEFAULT_MAX_HZ, minHz + 1, sampleRate / 2);
+    // Derived sizing: YIN's integration window is half the frame, so the largest
+    // lag it can evaluate is (frameSize/2 - 1). To actually reach `minHz` at this
+    // sample rate the frame must satisfy (frameSize/2 - 1) >= sampleRate/minHz;
+    // a shorter frame silently floors detection well above the advertised minHz
+    // (a 2048 frame at 96 kHz floors at ~94 Hz, missing C2/E2). Grow the frame to
+    // the minimum that honors minHz — but never SHRINK a caller's explicit frame,
+    // and never raise latency for a high-minHz caller whose request already
+    // suffices. The +2 keeps the bottom lag off the interpolation edge; capped by
+    // MAX_FRAME_SIZE so a pathological minHz can't request an enormous buffer.
+    const requiredFrame = Math.min(MAX_FRAME_SIZE, 2 * (Math.ceil(sampleRate / minHz) + 2));
+    this.frameSize = Math.max(requestedFrame, requiredFrame);
     // Default to 50% overlap; clamp to a valid [1, frameSize] range.
     const hop = opts.hopSize ?? this.frameSize >> 1;
     this.hopSize = clamp(Math.floor(hop), 1, this.frameSize);
-    this.yinOpts = {
-      minHz: opts.minHz ?? DEFAULT_MIN_HZ,
-      maxHz: opts.maxHz ?? DEFAULT_MAX_HZ,
-    };
+    // Convert the time-based unvoiced hold to a frame count from the actual hop
+    // so hold duration is stable across sample rate / hop (>= 1 frame).
+    this.holdFrames = Math.max(1, Math.round((UNVOICED_HOLD_MS / 1000) * sampleRate / this.hopSize));
+    this.yinOpts = { minHz, maxHz };
     // Leftover after framing is < frameSize, so frameSize + a typical quantum
     // fits in 2×frameSize; larger blocks grow the scratch once, then reuse it.
     this.pending = new Float32Array(this.frameSize * 2);
@@ -263,7 +291,7 @@ export class PitchTracker {
       if (result.f0 > 0) {
         this.last = result;
         this.unvoicedRun = 0;
-      } else if (this.unvoicedRun < UNVOICED_HOLD_FRAMES) {
+      } else if (this.unvoicedRun < this.holdFrames) {
         this.unvoicedRun++;
         // Hold this.last across the brief gap.
       } else {
