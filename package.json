@@ -1,7 +1,7 @@
 {
   "name": "mvox",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -12,7 +12,9 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "check": "npm run lint && npm run test && npm run build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "vendored:check": "node scripts/sync-vendored.mjs",
+    "vendored:sync": "node scripts/sync-vendored.mjs --sync"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.7",

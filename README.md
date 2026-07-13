@@ -30,15 +30,43 @@ No mic? A built-in demo voice makes every engine playable the moment you press *
 
 - **Four engines, one surface.** Click-free fade-through-silence switching between:
   - **VOCODER** — a 8–32 band channel vocoder; your voice modulates a built-in poly synth carrier (saw / pulse / noise) played from the keyboard or MIDI. Bands, bass, air/sibilance passthrough, release.
-  - **HARMONY** — up to 4 pitch-shifted harmony voices snapped to a chosen key/scale by diatonic interval, with level, spread, detune and formant controls.
+  - **HARMONY** — up to 4 pitch-shifted harmony voices snapped to a chosen key/scale by diatonic (or scale-degree) interval, with level, spread, detune and formant controls.
   - **FORMANT** — direct voice mangling: movable formant colour, gender/size, robot (pitch flatten to held notes), whisper (noise excitation), ring mod.
   - **FOLLOW** — monophonic pitch-to-synth with glide; confidence-gated so silence never triggers a note.
+- **Microtuning** — HARMONY and FOLLOW can snap to any scale, not just 12-TET: pick a preset, load a Scala `.scl` file, or paste an [mdrone](https://mdrone.mpump.live) share link to sing in the exact tuning you built there. Non-octave scales (e.g. Bohlen-Pierce) resolve at their real period. See [Microtuning](#microtuning).
 - **Pitch tracking in the worklet** — a YIN-style detector with an octave-error guard and a confidence output, tested against synthetic f0 sweeps, harmonic-rich saws, and octave traps.
 - **Performance surface** — 4 curated macros per mode, an assignable XY pad per mode, and a shared key/scale selector.
 - **FX tail** — drive → chorus → tempo-syncable delay → reverb, into a master limiter.
 - **Capture & share** — record the master out to a 16-bit **WAV**; 10 factory presets across the four modes; save your own to IndexedDB; export/import JSON; share a patch (never audio) via a URL fragment.
 - **Polyphony** — up to 8 carrier voices, oldest-note stealing, no hung notes on mode switch or device removal, and a **PANIC** button.
 - **Optional mbus publish** — the "bus" toggle in the header offers the master output to the [mbus](https://mbus.mpump.live) patchbay as a source named `mvox` (tab-to-tab WebRTC via the local **mpump** link-bridge, peer-to-peer, no server). Off by default; harmless without the bridge. The vendored mbus-client lives in `src/transport/mbus/` (provenance in its index.ts header).
+
+## Microtuning
+
+mvox is part of the m-suite's shared tuning system. By default it is plain 12-TET
+and everything sounds exactly as before, but the **Tuning** selector in the
+key/scale area lets the two scale-pitched engines — **HARMONY** (snap targets +
+harmony-voice intervals) and **FOLLOW** (synth pitch) — play any scale:
+
+- **Presets** — a small curated set (Just 5-limit, ¼-comma Meantone, Harmonic
+  Series, Maqam Rast, Slendro, …) plus the 12-TET default.
+- **`.scl` import** — load any [Scala](https://www.huygens-fokker.org/scala/scl_format.html)
+  scale file; a malformed file shows an error rather than failing silently.
+- **mdrone link** — paste an [mdrone](https://mdrone.mpump.live) share link to
+  import its tonic and scale (including non-octave periods): *harmonise your voice
+  in your mdrone tuning.*
+
+Tunings are degree-indexed and tonic-anchored: the tonic follows the selected
+**Key**, so changing key transposes the whole tuning with it. Tuning affects the
+internal engines only — the **VOCODER** and **FORMANT** engines are not
+scale-pitched and are untouched. The tuning travels inside presets, saved
+sessions, and share links; older patches with no tuning decode to 12-TET
+unchanged.
+
+The tuning math (`PortableTuning`, `.scl` parser, builtin scales) is the suite's
+shared **tuning-core**, authored in [mdrone](https://mdrone.mpump.live) and
+vendored verbatim into `src/vendor/tuning-core/` (AGPL-3.0, same author). Refresh
+it with `npm run vendored:sync`; a weekly CI job (`vendored:check`) guards drift.
 
 ## Run locally
 
@@ -61,6 +89,8 @@ mic — **wear headphones first** (a warning gates it) to avoid feedback howl.
 | `npm run lint` | ESLint (flat config, strict) |
 | `npm run check` | **lint + test + build** — the full gate; green before any milestone is "done" |
 | `npm run preview` | Serve the production build locally |
+| `npm run vendored:check` | Verify `src/vendor/tuning-core/` matches sibling `../mdrone` (needs mdrone cloned alongside) |
+| `npm run vendored:sync` | Re-copy the tuning core from `../mdrone` and re-stamp headers |
 
 ## Keyboard
 
@@ -159,8 +189,12 @@ src/
     mvox.worklet.ts     thin worklet shell around the core
     recorder.worklet.ts pass-through capture tap → WAV
     demoVoice.ts        synthetic vowel so it's playable with no mic
-    dsp/                pure, Node-tested DSP: pitch, scale, biquad, vocoder,
-                        carrier, pitchShifter, fx, wav, engineCore
+    dsp/                pure, Node-tested DSP: pitch, scale, microtuning, biquad,
+                        vocoder, carrier, pitchShifter, fx, wav, engineCore
+    tuning.ts           tuning presets + .scl import (glue over the vendored core)
+    linkImport.ts       import a tuning from a pasted mdrone share link
+    shareCodec.ts       mdrone share-link decoder (deflate + url-safe base64)
+  vendor/tuning-core/   PortableTuning model + .scl parser + builtins (vendored from mdrone)
   keyboard/layout.ts    Ableton-style computer-key note map
   midi/                 Web MIDI parse + router
   performance/macros.ts curated macros + XY per mode
