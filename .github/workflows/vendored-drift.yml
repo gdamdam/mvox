@@ -1,0 +1,43 @@
+name: Vendored drift
+
+# Weekly drift check for the tuning core vendored from mdrone into
+# src/vendor/tuning-core/. This is deliberately NOT part of the per-PR `check`
+# gate (see package.json): PR CI checks out a single repo, so ../mdrone is
+# absent and the compare can't run. Here we clone mdrone as a sibling and run
+# `vendored:check`, which exits non-zero (failing the job loudly) if any
+# vendored copy has drifted from upstream. Fix by running `npm run
+# vendored:sync` locally against ../mdrone and committing the refresh.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      mdrone_ref:
+        description: 'mdrone ref to compare against'
+        required: false
+        default: main
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out both repos as siblings under the workspace so the script's
+      # `../mdrone` resolves (root=<workspace>/mvox, upstream=<workspace>/mdrone).
+      - uses: actions/checkout@v4
+        with:
+          path: mvox
+      - uses: actions/checkout@v4
+        with:
+          repository: gdamdam/mdrone
+          ref: ${{ github.event.inputs.mdrone_ref || 'main' }}
+          path: mdrone
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mvox/package-lock.json
+      - run: npm ci
+        working-directory: mvox
+      - run: npm run vendored:check
+        working-directory: mvox
