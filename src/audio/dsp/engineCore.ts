@@ -18,6 +18,13 @@ import { FxChain } from './fx'
 import { PitchShifter } from './pitchShifter'
 import { PitchTracker } from './pitch'
 import { diatonicHarmony, hzToMidi, midiToHz, snapMidiToScale } from './scale'
+import {
+  degreeOffsetHz,
+  resolveTuning,
+  snapHzToTuning,
+  TUNING_MAX_DEGREES,
+  type SnapResult,
+} from './microtuning'
 
 export interface EngineTelemetry {
   inputLevel: number
@@ -119,6 +126,19 @@ export class MvoxEngineCore {
   private followLastRawMidi = Number.NaN
   private readonly followSynth: CarrierSynth
 
+  // MICROTUNING: the active tuning resolved from patch.shared.tuning + keyRoot.
+  // tuningCustom === false means "12-TET, snapped by scaleMode" — the legacy
+  // path in processHarmony/processFollow, kept byte-identical. Resolved once per
+  // change in setPatch (never per block); the cents live in a preallocated buffer
+  // and snaps write into snapScratch so the render loop allocates nothing.
+  private tuningCustom = false
+  private tuningTonicHz = 0
+  private tuningPeriodCents = 1200
+  private tuningCount = 0
+  private readonly tuningCents = new Float32Array(TUNING_MAX_DEGREES)
+  private tuningSig = ''
+  private readonly snapScratch: SnapResult = { degree: 0, octave: 0, hz: 0 }
+
   // Notes currently held from keyboard/MIDI (carrier pitch source).
   private heldNotes: number[] = []
 
@@ -169,6 +189,7 @@ export class MvoxEngineCore {
       patch.vocoder.release !== this.patch.vocoder.release
     const modeChanged = patch.mode !== this.patch.mode
     this.patch = patch
+    this.resolveTuningState(patch)
     this.carrier.setWave(patch.vocoder.carrierWave)
     this.followSynth.setWave(patch.follow.wave)
     this.fx.setParams(patch.fx, this.bpm)
@@ -180,6 +201,31 @@ export class MvoxEngineCore {
     // outgoing engine until the swap, and picks up this.patch.mode when it lands, so
     // rapid switching always settles on the latest selection.
     if (modeChanged && patch.mode !== this.renderMode) this.fadeDir = -1
+  }
+
+  // Resolve patch.shared.tuning + keyRoot into engine-ready form. Cheap change
+  // signature so we re-validate/copy only when the scale, period, or root moves —
+  // this runs on setPatch (a user gesture), never on the render hot path.
+  private resolveTuningState(patch: MvoxPatch): void {
+    const t = patch.shared.tuning
+    // Defense in depth at the worklet boundary: a missing/garbage tuning object
+    // falls back to the legacy 12-TET path rather than throwing on the setter.
+    if (!t || !Array.isArray(t.scaleCents)) {
+      this.tuningSig = 'legacy'
+      this.tuningCustom = false
+      return
+    }
+    const sig = `${patch.shared.keyRoot}|${t.period}|${t.scaleCents.join(',')}`
+    if (sig === this.tuningSig) return
+    this.tuningSig = sig
+    const resolved = resolveTuning(t.scaleCents, t.period, patch.shared.keyRoot)
+    this.tuningCustom = resolved.custom
+    if (resolved.custom) {
+      this.tuningTonicHz = resolved.tonicHz
+      this.tuningPeriodCents = resolved.periodCents
+      this.tuningCount = Math.min(resolved.count, TUNING_MAX_DEGREES)
+      for (let i = 0; i < this.tuningCount; i += 1) this.tuningCents[i] = resolved.cents[i]
+    }
   }
 
   setTempo(bpm: number): void {
@@ -398,12 +444,32 @@ export class MvoxEngineCore {
     const root = this.patch.shared.keyRoot
     const mode = this.patch.shared.scaleMode
     const baseMidi = voiced ? hzToMidi(f0) : 0
+    // Custom tuning: snap the detected pitch to a scale degree once; each harmony
+    // voice is a degree offset from it. The legacy 12-TET path stays in the MIDI
+    // domain (diatonicHarmony) so its shift — and thus its output — is unchanged.
+    if (voiced && this.tuningCustom) {
+      snapHzToTuning(f0, this.tuningTonicHz, this.tuningCents, this.tuningCount, this.tuningPeriodCents, this.snapScratch)
+    }
     for (let v = 0; v < HARMONY_VOICES; v += 1) {
       const shifter = this.harmonyShifters[v]
       if (v < voiceCount && voiced) {
-        const targetMidi = diatonicHarmony(baseMidi, root, mode, intervals[v])
         const detuneSemis = (detune / 100) * (v % 2 === 0 ? 1 : -1)
-        const shiftSemis = targetMidi - baseMidi + detuneSemis
+        let shiftSemis: number
+        if (this.tuningCustom) {
+          const targetHz = degreeOffsetHz(
+            this.snapScratch.degree,
+            this.snapScratch.octave,
+            intervals[v],
+            this.tuningTonicHz,
+            this.tuningCents,
+            this.tuningCount,
+            this.tuningPeriodCents,
+          )
+          shiftSemis = 12 * Math.log2(targetHz / f0) + detuneSemis
+        } else {
+          const targetMidi = diatonicHarmony(baseMidi, root, mode, intervals[v])
+          shiftSemis = targetMidi - baseMidi + detuneSemis
+        }
         shifter.setSemitones(shiftSemis)
         let s = shifter.process(voiceSample)
 
@@ -508,12 +574,24 @@ export class MvoxEngineCore {
       const midi = hzToMidi(f0)
       const rawMidi = Math.round(midi)
       if (rawMidi !== this.followLastRawMidi) {
-        const snapped = snapMidiToScale(
-          midi,
-          this.patch.shared.keyRoot,
-          this.patch.shared.scaleMode,
-        )
-        this.followTargetHz = midiToHz(snapped)
+        if (this.tuningCustom) {
+          // Degree-indexed snap to the active tuning (allocation-free scratch).
+          this.followTargetHz = snapHzToTuning(
+            f0,
+            this.tuningTonicHz,
+            this.tuningCents,
+            this.tuningCount,
+            this.tuningPeriodCents,
+            this.snapScratch,
+          ).hz
+        } else {
+          const snapped = snapMidiToScale(
+            midi,
+            this.patch.shared.keyRoot,
+            this.patch.shared.scaleMode,
+          )
+          this.followTargetHz = midiToHz(snapped)
+        }
         this.followLastRawMidi = rawMidi
       }
       this.followGate = true

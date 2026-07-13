@@ -4,6 +4,7 @@
 // funnels through sanitizePatch() so no unvalidated data reaches the DSP core.
 
 import type { Mode } from './dsp/scale'
+import { TUNING_MAX_DEGREES, TUNING_MAX_PERIOD } from './dsp/microtuning'
 
 export const ENGINE_MODES = ['vocoder', 'harmony', 'formant', 'follow'] as const
 export type EngineMode = (typeof ENGINE_MODES)[number]
@@ -86,9 +87,24 @@ function coerceEnum<T extends string>(value: unknown, allowed: readonly T[], fal
 // Patch shape
 // ---------------------------------------------------------------------------
 
+/**
+ * A microtuning scale (vendored tuning-core shape). An EMPTY `scaleCents` is the
+ * default and means "12-TET, snapped by the existing scaleMode" — the byte-
+ * identical legacy path. A non-empty scale is degree-indexed: `scaleCents[0]` is
+ * 0, entries ascend within one `period` (cents), and the tonic is derived from
+ * `keyRoot` so switching the key transposes the tuning. Persisted in the patch,
+ * so it crosses the same trust boundaries as every other field.
+ */
+export interface TuningSpec {
+  name: string
+  scaleCents: number[]
+  period: number
+}
+
 export interface SharedParams {
   keyRoot: number
   scaleMode: Mode
+  tuning: TuningSpec
   masterGain: number
   monitorMix: number
 }
@@ -173,6 +189,7 @@ export const DEFAULT_PATCH: MvoxPatch = Object.freeze({
   shared: {
     keyRoot: RANGES.keyRoot.default,
     scaleMode: 'major' as Mode,
+    tuning: { name: 'Default', scaleCents: [] as number[], period: 1200 },
     masterGain: RANGES.masterGain.default,
     monitorMix: RANGES.monitorMix.default,
   },
@@ -256,6 +273,36 @@ function sanitizePerf(raw: unknown): PerfParams {
   }
 }
 
+const DEFAULT_TUNING: TuningSpec = { name: 'Default', scaleCents: [], period: 1200 }
+
+/**
+ * Validate a stored/decoded/posted tuning. Never throws; any malformed table
+ * (non-array, non-finite, not rooted at 0, non-ascending, over the length cap,
+ * non-positive/too-large period, or a period not clearing the top degree) falls
+ * back to the empty 12-TET default — so a corrupt link or session can never push
+ * a bad scale into the worklet snap loop. Mirrors resolveTuning's guards; this is
+ * the persistence-boundary half, resolveTuning the audio-boundary half.
+ */
+function sanitizeTuning(raw: unknown): TuningSpec {
+  if (!isRecord(raw)) return { ...DEFAULT_TUNING }
+  const cents = Array.isArray(raw.scaleCents) ? raw.scaleCents : []
+  if (cents.length === 0) return { ...DEFAULT_TUNING }
+  if (cents.length > TUNING_MAX_DEGREES) return { ...DEFAULT_TUNING }
+  if (cents[0] !== 0) return { ...DEFAULT_TUNING }
+  for (let i = 0; i < cents.length; i++) {
+    const c = cents[i]
+    if (typeof c !== 'number' || !Number.isFinite(c)) return { ...DEFAULT_TUNING }
+    if (i > 0 && c <= cents[i - 1]) return { ...DEFAULT_TUNING }
+  }
+  const period = raw.period
+  if (typeof period !== 'number' || !Number.isFinite(period) || period <= 0 || period > TUNING_MAX_PERIOD) {
+    return { ...DEFAULT_TUNING }
+  }
+  if (cents[cents.length - 1] >= period) return { ...DEFAULT_TUNING }
+  const name = typeof raw.name === 'string' && raw.name.length > 0 ? raw.name.slice(0, 48) : 'Custom'
+  return { name, scaleCents: cents.slice(), period }
+}
+
 function clampInterval(v: unknown, fallback: number): number {
   if (typeof v !== 'number' || !Number.isFinite(v)) return fallback
   // Harmony intervals are scale degrees; keep within ±2 octaves of diatonic reach.
@@ -286,6 +333,7 @@ export function sanitizePatch(raw: unknown): MvoxPatch {
     shared: {
       keyRoot: clampInt(shared.keyRoot, RANGES.keyRoot),
       scaleMode: coerceEnum(shared.scaleMode, SCALE_MODES, d.shared.scaleMode),
+      tuning: sanitizeTuning(shared.tuning),
       masterGain: clamp(shared.masterGain, RANGES.masterGain),
       monitorMix: clamp(shared.monitorMix, RANGES.monitorMix),
     },
