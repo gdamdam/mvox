@@ -356,6 +356,71 @@ button {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+
+/* Microtuning selector — spans the shared grid, parts flow in a wrapping row. */
+.tuning {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+.tuning .select {
+  min-width: 150px;
+}
+.tuning__active {
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding-bottom: 0.45rem;
+}
+.tuning__scl {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.62rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.tuning__scl input {
+  max-width: 130px;
+  font-size: 0.66rem;
+}
+.tuning__link {
+  display: flex;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+.tuning__link input {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  min-width: 160px;
+}
+.tuning__link button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.7rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.tuning__link button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tuning__notice {
+  flex-basis: 100%;
+  font-size: 0.7rem;
+  color: var(--synth);
+}
 .toggle--on {
   border-color: var(--synth);
   color: var(--synth);

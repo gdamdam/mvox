@@ -16,6 +16,7 @@ import { useEngine } from './ui/useEngine'
 import { useKeyboard } from './ui/useKeyboard'
 import { Knob, Meter, Select, XYPad } from './components/controls'
 import { FxControls, ModeControls } from './components/ModeControls'
+import { TuningControls } from './components/TuningControls'
 import { Keyboard } from './components/Keyboard'
 import { PresetBar } from './components/PresetBar'
 
@@ -412,6 +413,7 @@ export default function App() {
         <div className="panel__shared">
           <Select label="Key" value={String(patch.shared.keyRoot)} options={rootOptions} onChange={(v) => update((p) => { p.shared.keyRoot = Number(v) })} />
           <Select label="Scale" value={patch.shared.scaleMode} options={scaleOptions} onChange={(v: Mode) => update((p) => { p.shared.scaleMode = v })} />
+          <TuningControls patch={patch} update={update} />
         </div>
 
         <ModeControls patch={patch} update={update} />
