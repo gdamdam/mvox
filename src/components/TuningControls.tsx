@@ -14,9 +14,11 @@ import { Select } from './controls'
 interface Props {
   patch: MvoxPatch
   update: (mut: (p: MvoxPatch) => void) => void
+  /** Greyed out and inert when the active engine ignores tuning (not HARMONY/FOLLOW). */
+  disabled?: boolean
 }
 
-export function TuningControls({ patch, update }: Props) {
+export function TuningControls({ patch, update, disabled }: Props) {
   const [notice, setNotice] = useState<string | null>(null)
   const [link, setLink] = useState('')
 
@@ -75,14 +77,14 @@ export function TuningControls({ patch, update }: Props) {
   const activeTonic = NOTE_NAMES[patch.shared.keyRoot] ?? '?'
 
   return (
-    <div className="tuning">
-      <Select label="Tuning" value={tuning.name} options={options} onChange={selectPreset} />
+    <div className={`tuning ${disabled ? 'tuning--disabled' : ''}`}>
+      <Select label="Tuning" value={tuning.name} options={options} onChange={selectPreset} disabled={disabled} />
       <span className="tuning__active" title="Active tuning and tonic">
         {tuning.scaleCents.length > 0 ? `${tuning.name} · ${activeTonic}` : '12-TET · scale mode'}
       </span>
       <label className="tuning__scl">
         <span>.scl</span>
-        <input type="file" accept=".scl,.txt,text/plain" onChange={onSclFile} />
+        <input type="file" accept=".scl,.txt,text/plain" onChange={onSclFile} disabled={disabled} />
       </label>
       <div className="tuning__link">
         <input
@@ -90,8 +92,9 @@ export function TuningControls({ patch, update }: Props) {
           placeholder="Paste mdrone link"
           value={link}
           onChange={(e) => setLink(e.target.value)}
+          disabled={disabled}
         />
-        <button type="button" onClick={onImportLink} disabled={link.trim().length === 0}>
+        <button type="button" onClick={onImportLink} disabled={disabled || link.trim().length === 0}>
           Import
         </button>
       </div>

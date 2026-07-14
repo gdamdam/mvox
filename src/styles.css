@@ -345,6 +345,12 @@ button {
   font-family: var(--font-mono);
   font-size: 0.76rem;
 }
+.select--disabled {
+  opacity: 0.45;
+}
+.select select:disabled {
+  cursor: not-allowed;
+}
 .toggle {
   align-self: end;
   background: var(--panel);
@@ -367,6 +373,20 @@ button {
 }
 .tuning .select {
   min-width: 150px;
+}
+/* Whole tuning cluster dims when the active engine ignores tuning. The inner
+   controls also get the native :disabled treatment; this covers the labels. */
+.tuning--disabled {
+  opacity: 0.45;
+}
+.tuning--disabled input:disabled,
+.tuning--disabled button:disabled {
+  cursor: not-allowed;
+}
+/* Avoid compounding opacity: the parent already dims, so the inner select
+   should not dim a second time. */
+.tuning--disabled .select--disabled {
+  opacity: 1;
 }
 .tuning__active {
   font-size: 0.7rem;

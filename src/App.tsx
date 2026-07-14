@@ -256,6 +256,9 @@ export default function App() {
   const macros = MACROS[patch.mode]
   const xy = XY[patch.mode]
   const perf = patch.perf[patch.mode]
+  // Key/scale/tuning are consumed only by the pitch-quantized engines; the
+  // vocoder and formant paths ignore them, so grey the selectors out there.
+  const pitchAware = patch.mode === 'harmony' || patch.mode === 'follow'
 
   return (
     <div className={`app app--${patch.mode}`}>
@@ -411,9 +414,9 @@ export default function App() {
 
       <section className="panel" id="mode-panel" role="tabpanel">
         <div className="panel__shared">
-          <Select label="Key" value={String(patch.shared.keyRoot)} options={rootOptions} onChange={(v) => update((p) => { p.shared.keyRoot = Number(v) })} />
-          <Select label="Scale" value={patch.shared.scaleMode} options={scaleOptions} onChange={(v: Mode) => update((p) => { p.shared.scaleMode = v })} />
-          <TuningControls patch={patch} update={update} />
+          <Select label="Key" value={String(patch.shared.keyRoot)} options={rootOptions} onChange={(v) => update((p) => { p.shared.keyRoot = Number(v) })} disabled={!pitchAware} />
+          <Select label="Scale" value={patch.shared.scaleMode} options={scaleOptions} onChange={(v: Mode) => update((p) => { p.shared.scaleMode = v })} disabled={!pitchAware} />
+          <TuningControls patch={patch} update={update} disabled={!pitchAware} />
         </div>
 
         <ModeControls patch={patch} update={update} />
