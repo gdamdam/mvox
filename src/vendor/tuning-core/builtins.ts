@@ -1,6 +1,6 @@
 /**
  * VENDORED — DO NOT EDIT BY HAND.
- * Source: mdrone/src/tuning/builtins.ts @ 7a09d97
+ * Source: mdrone/src/tuning/builtins.ts @ a28eedd
  * Copied verbatim from the sibling mdrone repo (same author). This file is
  * licensed AGPL-3.0-or-later, identical to both repos. Refresh with
  * `npm run vendored:sync`; CI guards drift with `npm run vendored:check`.
@@ -48,7 +48,7 @@ export const AUTHORED_PORTABLE_TUNINGS: readonly PortableTuning[] = [
   { tonicHz: DEFAULT_TONIC_HZ, scaleCents: [0, 176.6, 203.9, 239.5, 444, 470.8, 674.6, 702, 737.7, 941.4, 968.8, 1172.7], period: 1200, name: "Young — Well-Tuned-Piano (7-limit)" },
   { tonicHz: DEFAULT_TONIC_HZ, scaleCents: [0, 111.73, 203.91, 266.87, 386.31, 498.04, 582.51, 701.96, 813.69, 884.36, 968.83, 1088.27], period: 1200, name: "Just 7-limit" },
   { tonicHz: DEFAULT_TONIC_HZ, scaleCents: [0, 165, 182.4, 266.87, 386.31, 498.04, 551.32, 701.96, 782.5, 884.36, 968.83, 1049.4], period: 1200, name: "Partch 11-limit subset" },
-  { tonicHz: DEFAULT_TONIC_HZ, scaleCents: [0, 80, 240, 320, 400, 480, 560, 640, 720, 800, 880, 960], period: 1200, name: "15-TET (Catler)" },
+  { tonicHz: DEFAULT_TONIC_HZ, scaleCents: [0, 80, 240, 320, 400, 480, 560, 640, 720, 800, 880, 960], period: 1200, name: "Catler 12-of-15" },
   { tonicHz: DEFAULT_TONIC_HZ, scaleCents: [0, 90.2, 203.9, 294.1, 407.8, 498, 611.7, 702, 792.2, 905.9, 996.1, 1109.8], period: 1200, name: "Pythagorean (3-limit)" },
   { tonicHz: DEFAULT_TONIC_HZ, scaleCents: [0, 90.2, 193.2, 294.1, 386.3, 498, 590.2, 696.6, 792.2, 889.7, 996.1, 1088.3], period: 1200, name: "Kirnberger III (well-temp)" },
   { tonicHz: DEFAULT_TONIC_HZ, scaleCents: [0, 90.2, 192.2, 294.1, 390.2, 498, 588.3, 696.1, 792.2, 888.3, 996.1, 1092.2], period: 1200, name: "Werckmeister III (well-temp)" },

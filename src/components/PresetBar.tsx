@@ -13,10 +13,13 @@ import {
   type UserPreset,
 } from '../persistence/idb'
 import { patchToShareUrl } from '../sharing/codec'
+import type { PerfSnapshot } from '../persistence/session'
 
 interface Props {
   patch: MvoxPatch
-  onLoad: (patch: MvoxPatch) => void
+  // Current performance state, captured into a preset when "with perf" is checked.
+  perf: PerfSnapshot
+  onLoad: (patch: MvoxPatch, perf?: PerfSnapshot) => void
 }
 
 function randomId(): string {
@@ -25,9 +28,12 @@ function randomId(): string {
 }
 let idCounter = 0
 
-export function PresetBar({ patch, onLoad }: Props) {
+export function PresetBar({ patch, perf, onLoad }: Props) {
   const [userPresets, setUserPresets] = useState<UserPreset[]>([])
   const [shareMsg, setShareMsg] = useState('')
+  // When on, Save captures the current performance state (BPM, latch, MIDI maps,
+  // channel) into the preset so recalling it restores the whole performance.
+  const [includePerf, setIncludePerf] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   // Latest-wins guard: concurrent list()s (e.g. save + delete) can resolve out of
   // order, and a resolve after unmount would set state on a dead component.
@@ -48,15 +54,36 @@ export function PresetBar({ patch, onLoad }: Props) {
     }
   }, [])
 
+  const notify = (msg: string) => {
+    setShareMsg(msg)
+    setTimeout(() => setShareMsg(''), 3000)
+  }
+
   const saveUser = async () => {
     const name = window.prompt('Preset name?', patch.name || 'My patch')
     if (!name) return
-    await idbSavePreset({ id: randomId(), name, createdAt: Date.now(), patch: { ...patch, name } })
+    // idbSavePreset never throws but reports failure explicitly — surface it so a
+    // full/blocked IndexedDB can't silently imply the preset was saved.
+    const res = await idbSavePreset({
+      id: randomId(),
+      name,
+      createdAt: Date.now(),
+      patch: { ...patch, name },
+      perf: includePerf ? perf : undefined,
+    })
+    if (!res.ok) {
+      notify(`Save failed: ${res.error}`)
+      return
+    }
     refresh()
   }
 
   const del = async (id: string) => {
-    await idbDeletePreset(id)
+    const res = await idbDeletePreset(id)
+    if (!res.ok) {
+      notify(`Delete failed: ${res.error}`)
+      return
+    }
     refresh()
   }
 
@@ -116,6 +143,10 @@ export function PresetBar({ patch, onLoad }: Props) {
         <button type="button" onClick={saveUser} disabled={!idbAvailable()}>
           Save
         </button>
+        <label className="presets__perf" title="Include BPM, latch, MIDI mappings and channel in the saved preset">
+          <input type="checkbox" checked={includePerf} onChange={(e) => setIncludePerf(e.target.checked)} />
+          with perf
+        </label>
         <button type="button" onClick={doExport}>
           Export
         </button>
@@ -142,8 +173,9 @@ export function PresetBar({ patch, onLoad }: Props) {
         <div className="presets__user">
           {userPresets.map((p) => (
             <span key={p.id} className="presets__chip">
-              <button type="button" onClick={() => onLoad(migratePatch({ ...p.patch, name: p.name }))}>
+              <button type="button" onClick={() => onLoad(migratePatch({ ...p.patch, name: p.name }), p.perf)}>
                 {p.name}
+                {p.perf ? <span className="presets__perf-badge" title="Includes performance state"> ●</span> : null}
               </button>
               <button type="button" className="presets__x" aria-label={`Delete ${p.name}`} onClick={() => del(p.id)}>
                 ×

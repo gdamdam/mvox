@@ -100,8 +100,18 @@ export function sceneToImportedTuning(scene: unknown): ImportedTuning | null {
   }
 }
 
+// A real mdrone share link is a base64 payload (capped downstream at 32 KB of
+// chars in shareCodec) wrapped in a short URL. 64 KB of URL text is far above
+// any legitimate link yet bounds the work of URL/param parsing so a pasted
+// multi-megabyte string can never stall the UI thread before we even decode
+// (DEFECT #11). Oversize input takes the same "unusable link → null" path as
+// any other malformed link, so the caller shows its friendly notice.
+const MAX_SHARE_URL_CHARS = 64 * 1024;
+
 /** Fetch + decode an mdrone share link into a tuning, or null on any failure. */
 export async function importTuningFromUrl(url: string): Promise<ImportedTuning | null> {
+  // Reject before any URL/param parsing or decoding so a huge paste can't freeze.
+  if (typeof url !== 'string' || url.length > MAX_SHARE_URL_CHARS) return null
   try {
     const extracted = extractPayloadFromUrl(url)
     if (!extracted) return null

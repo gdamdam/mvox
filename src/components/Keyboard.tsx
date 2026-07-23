@@ -18,6 +18,13 @@ interface KeyboardProps {
 const WHITE = [0, 2, 4, 5, 7, 9, 11]
 const BLACK: Record<number, boolean> = { 1: true, 3: true, 6: true, 8: true, 10: true }
 
+// A native <button> only fires a single `click` on Enter/Space, which can't
+// express press-and-hold. We drive note-on from keydown and note-off from keyup
+// instead, and preventDefault to (a) stop Space scrolling the page and (b)
+// suppress the synthetic click so a key press can't double-trigger. `repeat`
+// guards against the OS key-repeat re-firing note-on while the key is held.
+const isActivateKey = (key: string) => key === 'Enter' || key === ' ' || key === 'Spacebar'
+
 // Reverse the code→semitone map to label keys on the visual keyboard.
 const SEMITONE_TO_KEY = new Map<number, string>()
 for (const [code, semi] of Object.entries(NOTE_CODES)) {
@@ -51,6 +58,18 @@ export function Keyboard({ octave, activeNotes, onNoteOn, onNoteOff }: KeyboardP
                 if (e.buttons > 0) onNoteOff(midi)
               }}
               onPointerCancel={() => onNoteOff(midi)}
+              onKeyDown={(e) => {
+                if (isActivateKey(e.key) && !e.repeat) {
+                  e.preventDefault()
+                  onNoteOn(midi, 0.8)
+                }
+              }}
+              onKeyUp={(e) => {
+                if (isActivateKey(e.key)) {
+                  e.preventDefault()
+                  onNoteOff(midi)
+                }
+              }}
             >
               {semi < 12 && SEMITONE_TO_KEY.has(semi) ? (
                 <span className="keys__hint">{SEMITONE_TO_KEY.get(semi)}</span>
@@ -76,6 +95,20 @@ export function Keyboard({ octave, activeNotes, onNoteOn, onNoteOff }: KeyboardP
                 onPointerCancel={(e) => {
                   e.stopPropagation()
                   onNoteOff(midi + 1)
+                }}
+                onKeyDown={(e) => {
+                  if (isActivateKey(e.key) && !e.repeat) {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onNoteOn(midi + 1, 0.8)
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (isActivateKey(e.key)) {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onNoteOff(midi + 1)
+                  }
                 }}
               >
                 {semi + 1 < 12 && SEMITONE_TO_KEY.has(semi + 1) ? (

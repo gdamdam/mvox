@@ -83,9 +83,11 @@ class MvoxProcessor extends AudioWorkletProcessor {
       this.port.postMessage({
         type: 'telemetry',
         inputLevel: t.inputLevel,
+        inputClip: t.inputClip,
         outputPeak: t.outputPeak,
         f0: t.f0,
         confidence: t.confidence,
+        targetHz: t.targetHz,
         activeVoices: t.activeVoices,
       })
     }

@@ -1,6 +1,6 @@
 /**
  * VENDORED — DO NOT EDIT BY HAND.
- * Source: mdrone/src/tuning/model.ts @ 7a09d97
+ * Source: mdrone/src/tuning/model.ts @ a28eedd
  * Copied verbatim from the sibling mdrone repo (same author). This file is
  * licensed AGPL-3.0-or-later, identical to both repos. Refresh with
  * `npm run vendored:sync`; CI guards drift with `npm run vendored:check`.

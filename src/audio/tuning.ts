@@ -8,7 +8,7 @@
 import type { TuningSpec } from './contracts'
 import { resolveTuning } from './dsp/microtuning'
 import { BUILTIN_PORTABLE_TUNINGS } from '../vendor/tuning-core/builtins'
-import { parseScl } from '../vendor/tuning-core/scala'
+import { parseSclGuarded } from './scalaImport'
 
 /** The empty scale = "12-TET, snapped by the current Scale mode" (legacy path). */
 export const DEFAULT_TUNING_PRESET: TuningSpec = { name: 'Default', scaleCents: [], period: 1200 }
@@ -33,7 +33,10 @@ export const TUNING_PRESETS: readonly TuningSpec[] = [
  * the error rather than silently importing nothing.
  */
 export function importSclText(text: string): TuningSpec {
-  const scl = parseScl(text)
+  // parseSclGuarded enforces input-size limits (text length + declared note count)
+  // before delegating to the vendored parser, so a huge/hostile .scl can't freeze
+  // the app; it otherwise behaves identically (throws on a malformed file).
+  const scl = parseSclGuarded(text)
   const spec: TuningSpec = {
     name: scl.name || 'Imported',
     scaleCents: [...scl.cents],

@@ -21,6 +21,20 @@ export interface YinOptions {
   threshold?: number;
 }
 
+/**
+ * Preallocated scratch for {@link yinDetect}'s two O(tauMax) work buffers. The
+ * streaming PitchTracker owns one of these (sized to its frame) and passes it on
+ * every call so steady-state detection allocates nothing on the audio thread —
+ * `new Float32Array` per frame at ~375 frames/sec is exactly the kind of churn
+ * that triggers GC pauses and dropouts. Each buffer must be at least `tauMax + 1`
+ * long for the frame in use; a shorter (or absent) buffer makes yinDetect fall
+ * back to a lazy per-call allocation, so existing callers keep working unchanged.
+ */
+export interface YinScratch {
+  diff: Float32Array;
+  cmnd: Float32Array;
+}
+
 const DEFAULT_MIN_HZ = 65; // ~C2
 const DEFAULT_MAX_HZ = 1000;
 const DEFAULT_THRESHOLD = 0.15;
@@ -79,9 +93,14 @@ function clamp(x: number, lo: number, hi: number): number {
  * `tauMin` is the lowest searched lag: at `tau === tauMin` the left neighbor
  * `cmnd[tau - 1]` sits below the search floor and would bias the interpolated
  * period, so refinement is skipped there.
+ *
+ * `tauMax` is passed explicitly rather than derived from `cmnd.length` because a
+ * reused scratch buffer (see YinScratch) is larger than the logical `tauMax + 1`
+ * range; the entries past `tauMax` are stale from a previous call and must not be
+ * read as the right neighbor of the top lag.
  */
-function parabolicRefine(cmnd: Float32Array, tau: number, tauMin: number): number {
-  if (tau <= tauMin || tau >= cmnd.length - 1) return tau;
+function parabolicRefine(cmnd: Float32Array, tau: number, tauMin: number, tauMax: number): number {
+  if (tau <= tauMin || tau >= tauMax) return tau;
   const s0 = cmnd[tau - 1];
   const s1 = cmnd[tau];
   const s2 = cmnd[tau + 1];
@@ -103,6 +122,7 @@ export function yinDetect(
   frame: Float32Array,
   sampleRate: number,
   opts: YinOptions = {},
+  scratch?: YinScratch,
 ): PitchResult {
   const n = frame.length;
   if (n < 4 || !Number.isFinite(sampleRate) || sampleRate <= 0) return UNVOICED;
@@ -127,11 +147,25 @@ export function yinDetect(
   const tauMin = clamp(Math.floor(sampleRate / maxHz), 1, tauMaxAllowed);
   const tauMax = clamp(Math.ceil(sampleRate / minHz), tauMin + 1, tauMaxAllowed);
 
+  // Work buffers hold indices 0..tauMax. Reuse the caller's scratch when it is
+  // supplied and big enough (the streaming path); otherwise allocate lazily so
+  // one-shot callers keep working. Only indices [0..tauMax] are written and read
+  // below, so a larger reused buffer's stale tail is never observed.
+  const need = tauMax + 1;
+  let diff: Float32Array;
+  let cmnd: Float32Array;
+  if (scratch && scratch.diff.length >= need && scratch.cmnd.length >= need) {
+    diff = scratch.diff;
+    cmnd = scratch.cmnd;
+  } else {
+    diff = new Float32Array(need);
+    cmnd = new Float32Array(need);
+  }
+
   // Step 1: difference function d(tau) over the fixed window. Computed from
   // tau=1 (not tauMin) so the cumulative mean below sums over the full lag
   // range d(1..tau); truncating the sum at tauMin inflates the normalized dip
   // near tauMin and makes the detector octave-halve tones close to maxHz.
-  const diff = new Float32Array(tauMax + 1);
   for (let tau = 1; tau <= tauMax; tau++) {
     let sum = 0;
     for (let j = 0; j < w; j++) {
@@ -144,7 +178,6 @@ export function yinDetect(
   // Step 2: cumulative mean normalized difference. d'(tau) = d(tau) divided by
   // the running mean of d(1..tau); this de-emphasizes the trivial tau=0 dip and
   // makes the absolute threshold meaningful across signal levels.
-  const cmnd = new Float32Array(tauMax + 1);
   cmnd[0] = 1;
   let running = 0;
   for (let tau = 1; tau <= tauMax; tau++) {
@@ -194,7 +227,7 @@ export function yinDetect(
     }
   }
 
-  const refined = parabolicRefine(cmnd, bestTau, tauMin);
+  const refined = parabolicRefine(cmnd, bestTau, tauMin, tauMax);
   if (!Number.isFinite(refined) || refined <= 0) return UNVOICED;
 
   const f0 = sampleRate / refined;
@@ -233,6 +266,7 @@ export class PitchTracker {
   private pending: Float32Array;
   private pendingLen: number;
   private frame: Float32Array;
+  private readonly yinScratch: YinScratch;
   private last: PitchResult;
   private unvoicedRun: number;
 
@@ -264,6 +298,12 @@ export class PitchTracker {
     this.pending = new Float32Array(this.frameSize * 2);
     this.pendingLen = 0;
     this.frame = new Float32Array(this.frameSize);
+    // YIN's work buffers span lags 0..tauMax, and tauMax <= frameSize/2 - 1, so
+    // (frameSize>>1)+1 entries always cover the largest possible range for this
+    // frame. Allocated once here; process() passes it on every call so the
+    // steady-state audio-thread path allocates nothing.
+    const scratchLen = (this.frameSize >> 1) + 1;
+    this.yinScratch = { diff: new Float32Array(scratchLen), cmnd: new Float32Array(scratchLen) };
     this.last = UNVOICED;
     this.unvoicedRun = 0;
   }
@@ -285,7 +325,7 @@ export class PitchTracker {
       // Copy into the reusable frame so yinDetect never sees overlapping-frame
       // mutation of live pending data.
       this.frame.set(this.pending.subarray(offset, offset + this.frameSize));
-      const result = yinDetect(this.frame, this.sampleRate, this.yinOpts);
+      const result = yinDetect(this.frame, this.sampleRate, this.yinOpts, this.yinScratch);
       // Keep the last *voiced* estimate through brief unvoiced gaps, but adopt
       // fresh voiced results immediately so a sweep tracks without lag.
       if (result.f0 > 0) {

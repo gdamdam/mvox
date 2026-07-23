@@ -20,6 +20,9 @@ interface FakeOpts {
   blockedThenSuccess?: boolean;
   // Make store.put throw synchronously (mimics DataCloneError).
   throwOnPut?: boolean;
+  // Abort the transaction with an error instead of completing (mimics a quota
+  // or write failure surfacing on tx.onerror).
+  txError?: boolean;
 }
 
 interface FakeHarness {
@@ -74,15 +77,20 @@ function createFakeIDB(
       },
       transaction() {
         const tx: Record<string, unknown> = {
-          error: null,
+          error: opts.txError ? new Error("QuotaExceededError") : null,
           oncomplete: null,
           onerror: null,
           onabort: null,
           objectStore: () => makeStore(),
         };
-        // Complete the transaction after any request handlers have run.
+        // Complete the transaction after any request handlers have run — or fire
+        // onerror instead when simulating a failed write.
         queueMicrotask(() => {
-          queueMicrotask(() => (tx.oncomplete as (() => void) | null)?.());
+          queueMicrotask(() =>
+            opts.txError
+              ? (tx.onerror as (() => void) | null)?.()
+              : (tx.oncomplete as (() => void) | null)?.(),
+          );
         });
         return tx;
       },
@@ -164,6 +172,46 @@ describe("save / list / delete round-trip", () => {
     vi.stubGlobal("indexedDB", fake.indexedDB);
     await idbSavePreset({ id: "abc", name: "One", createdAt: 1, patch: makePatch() });
     expect(fake.state.closeCount).toBe(1);
+  });
+});
+
+describe("DEFECT #7: writes surface explicit results, never silent success", () => {
+  it("a successful save resolves { ok: true }", async () => {
+    vi.stubGlobal("indexedDB", createFakeIDB().indexedDB);
+    const res = await idbSavePreset({ id: "a", name: "One", createdAt: 1, patch: makePatch() });
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("a save that fails a transaction surfaces { ok: false, error }", async () => {
+    vi.stubGlobal("indexedDB", createFakeIDB(new Map(), { txError: true }).indexedDB);
+    const res = await idbSavePreset({ id: "a", name: "One", createdAt: 1, patch: makePatch() });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/Quota/);
+  });
+
+  it("a save that throws synchronously (DataCloneError) surfaces { ok: false }", async () => {
+    vi.stubGlobal("indexedDB", createFakeIDB(new Map(), { throwOnPut: true }).indexedDB);
+    const res = await idbSavePreset({ id: "a", name: "One", createdAt: 1, patch: makePatch() });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/DataClone/);
+  });
+
+  it("a save resolves { ok: false } when storage is unavailable", async () => {
+    // No indexedDB global at all (private browsing / SSR): must report failure,
+    // not pretend the preset was stored.
+    const res = await idbSavePreset({ id: "a", name: "One", createdAt: 1, patch: makePatch() });
+    expect(res.ok).toBe(false);
+  });
+
+  it("deleting a missing key resolves { ok: true } (IDB treats it as a no-op success)", async () => {
+    vi.stubGlobal("indexedDB", createFakeIDB().indexedDB);
+    expect(await idbDeletePreset("does-not-exist")).toEqual({ ok: true });
+  });
+
+  it("a delete that fails a transaction surfaces { ok: false, error }", async () => {
+    vi.stubGlobal("indexedDB", createFakeIDB(new Map(), { txError: true }).indexedDB);
+    const res = await idbDeletePreset("a");
+    expect(res.ok).toBe(false);
   });
 });
 

@@ -109,3 +109,124 @@ describe('CarrierSynth voice ownership', () => {
     expect(s.process()).toBe(0)
   })
 })
+
+// --- Carrier shaping: transpose / unison / pulse width ------------------------
+
+/** Count positive-going zero crossings → fundamental Hz over the window. */
+function zeroCrossHz(xs: number[]): number {
+  let crossings = 0
+  for (let i = 1; i < xs.length; i++) {
+    if (xs[i - 1] < 0 && xs[i] >= 0) crossings += 1
+  }
+  return (crossings * FS) / xs.length
+}
+
+/** Fraction of samples that are strictly positive. */
+function posFraction(xs: number[]): number {
+  let p = 0
+  for (const x of xs) if (x > 0) p += 1
+  return p / xs.length
+}
+
+/** A settled saw voice; optional transpose (semitones). */
+function settledSaw(midi: number, transpose?: number): CarrierSynth {
+  const s = new CarrierSynth(FS)
+  s.setWave('saw')
+  if (transpose !== undefined) s.setTranspose(transpose)
+  s.noteOn(midi, 1)
+  for (let i = 0; i < 512; i++) s.process()
+  return s
+}
+
+describe('CarrierSynth transpose', () => {
+  it('setTranspose(+12) doubles the detected pitch; default tracks the note', () => {
+    const base = zeroCrossHz(collect(settledSaw(69), 24000)) // A4 = 440 Hz
+    expect(base).toBeGreaterThan(430)
+    expect(base).toBeLessThan(450)
+    const up = zeroCrossHz(collect(settledSaw(69, 12), 24000))
+    expect(up / base).toBeGreaterThan(1.9)
+    expect(up / base).toBeLessThan(2.1)
+  })
+
+  it('setTranspose(0) is bit-identical to no transpose', () => {
+    const a = new CarrierSynth(FS)
+    a.setWave('saw')
+    a.setTranspose(0)
+    a.noteOn(60, 1)
+    const b = new CarrierSynth(FS)
+    b.setWave('saw')
+    b.noteOn(60, 1)
+    expect(collect(a, 4000)).toEqual(collect(b, 4000))
+  })
+})
+
+describe('CarrierSynth unison', () => {
+  it('unison=1, detune=0 is bit-identical to the single-oscillator path', () => {
+    const a = new CarrierSynth(FS)
+    a.setWave('saw')
+    a.setUnison(1, 0)
+    a.noteOn(60, 1)
+    const b = new CarrierSynth(FS)
+    b.setWave('saw')
+    b.noteOn(60, 1)
+    expect(collect(a, 4000)).toEqual(collect(b, 4000))
+  })
+
+  it('unison=3 with detune spreads the carrier vs a single oscillator', () => {
+    const single = new CarrierSynth(FS)
+    single.setWave('saw')
+    single.setUnison(1, 0)
+    single.noteOn(60, 1)
+    const uni = new CarrierSynth(FS)
+    uni.setWave('saw')
+    uni.setUnison(3, 25)
+    uni.noteOn(60, 1)
+    for (let i = 0; i < 512; i++) {
+      single.process()
+      uni.process()
+    }
+    const a = collect(single, 8000)
+    const b = collect(uni, 8000)
+    let diff = 0
+    let energy = 0
+    for (let i = 0; i < a.length; i++) {
+      diff += Math.abs(a[i] - b[i])
+      energy += b[i] * b[i]
+    }
+    // Detuned stack diverges from the single oscillator (audible spread/beating)...
+    expect(diff).toBeGreaterThan(1)
+    // ...while still producing real carrier energy (not muted by the normalization).
+    expect(energy).toBeGreaterThan(0)
+  })
+})
+
+describe('CarrierSynth pulse width', () => {
+  function settledPulse(pw?: number): CarrierSynth {
+    const s = new CarrierSynth(FS)
+    s.setWave('pulse')
+    if (pw !== undefined) s.setPulseWidth(pw)
+    s.noteOn(69, 1)
+    for (let i = 0; i < 512; i++) s.process()
+    return s
+  }
+
+  it('setPulseWidth changes the duty cycle (positive fraction)', () => {
+    const square = posFraction(collect(settledPulse(0.5), 24000))
+    const narrow = posFraction(collect(settledPulse(0.2), 24000))
+    expect(square).toBeGreaterThan(0.4)
+    expect(square).toBeLessThan(0.6)
+    expect(narrow).toBeLessThan(0.35)
+    expect(narrow).toBeLessThan(square - 0.1)
+  })
+
+  it('setPulseWidth(0.5) is bit-identical to the default two-saw square', () => {
+    const a = new CarrierSynth(FS)
+    a.setWave('pulse')
+    a.setPulseWidth(0.5)
+    a.noteOn(60, 1)
+    const b = new CarrierSynth(FS)
+    b.setWave('pulse')
+    b.noteOn(60, 1)
+    expect(collect(a, 4000)).toEqual(collect(b, 4000))
+  })
+})

@@ -4,9 +4,9 @@
 
 **Your voice is the patch.**
 
-[![version](https://img.shields.io/badge/version-0.1.8-b98cff)](./package.json)
+[![version](https://img.shields.io/badge/version-1.0.1-b98cff)](./package.json)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-8b5cf6)](./LICENSE)
-[![tests](https://img.shields.io/badge/tests-158%20passing-6cd23a)](#verification)
+[![tests](https://img.shields.io/badge/tests-352%20passing-6cd23a)](#verification)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)](./tsconfig.app.json)
 [![React](https://img.shields.io/badge/React-19-61dafb)](https://react.dev)
 [![Vite](https://img.shields.io/badge/Vite-8-646cff)](https://vite.dev)
@@ -29,14 +29,20 @@ No mic? A built-in demo voice makes every engine playable the moment you press *
 ## Highlights
 
 - **Four engines, one surface.** Click-free fade-through-silence switching between:
-  - **VOCODER** — a 8–32 band channel vocoder; your voice modulates a built-in poly synth carrier (saw / pulse / noise) played from the keyboard or MIDI. Bands, bass, air/sibilance passthrough, release.
-  - **HARMONY** — up to 4 pitch-shifted harmony voices snapped to a chosen key/scale by diatonic (or scale-degree) interval, with level, spread, detune and formant controls.
+  - **VOCODER** — a 8–32 band channel vocoder; your voice modulates a built-in poly synth carrier (saw / pulse / noise) played from the keyboard or MIDI. Bands, bass (voice-gated), air/sibilance passthrough, analysis attack/release, carrier tone (low-pass), carrier octave, unison (detuned voices), pulse-width, and an envelope **freeze** for sustained pads.
+  - **HARMONY** — up to 4 pitch-shifted harmony voices snapped to a chosen key/scale by diatonic (or scale-degree) interval. Independent **per-voice** enable / interval / level / pan / detune, independent dry-lead vs harmony-wet levels, formant preserve, a snap/glide **response** control, one-click voicing presets, and an optional **held-keyboard** mode that harmonizes your voice to the exact chord you hold.
   - **FORMANT** — direct voice mangling: movable formant colour, gender/size, robot (pitch flatten to held notes), whisper (noise excitation), ring mod.
   - **FOLLOW** — monophonic pitch-to-synth with glide; confidence-gated so silence never triggers a note.
 - **Microtuning** — HARMONY and FOLLOW can snap to any scale, not just 12-TET: pick a preset, load a Scala `.scl` file, or paste an [mdrone](https://mdrone.mpump.live) share link to sing in the exact tuning you built there. Non-octave scales (e.g. Bohlen-Pierce) resolve at their real period. See [Microtuning](#microtuning).
-- **Pitch tracking in the worklet** — a YIN-style detector with an octave-error guard and a confidence output, tested against synthetic f0 sweeps, harmonic-rich saws, and octave traps.
+- **Pitch tracking in the worklet** — a YIN-style detector with an octave-error guard and a confidence output, tested against synthetic f0 sweeps, harmonic-rich saws, and octave traps. Configurable vocal-range presets (bass/tenor/alto/soprano) or custom min/max Hz, pitch smoothing, and note-change hysteresis; a live detected-note → target-note readout.
+- **Input conditioning** — pre-gain, a smooth noise gate with one-click calibration (measures your room's noise floor and sets the gate above it), and a clipping indicator with peak-hold. Gate + gain feed both the pitch analysis and the voice processing.
+- **MIDI learn** — bind any CC, pitch bend, mod wheel or channel pressure to macros, the XY axes, master/monitor, or trigger panic / record / latch / mode switches. Per-input and per-channel filtering; mappings persist in session state.
+- **Last-session recall** — your patch and performance state (BPM, latch, MIDI mappings, input/tracking settings) are auto-restored on reload; a corrupt or future-version session is recovered gracefully (future data is backed up, never silently wiped).
+- **Complete recall** — user presets can optionally carry the full performance state ("with perf"); A/B compare two takes instantly; eight numbered quick-recall slots (persisted) recallable by click or MIDI **program change**.
+- **Devices, latency & CPU** — pick the input device (hot-swappable) and, where the browser supports `setSinkId`, the output; a readout of sample rate, base/output latency and a Normal/Safe latency-vs-dropout quality mode; a render-load meter where `AudioContext.renderCapacity` exists (hidden, not faked, where it doesn't).
+- **Performance (stage) mode** — a focused, touch-friendly full-viewport surface with large macros + XY pad, meters, detected/target pitch and clip/tracking state, quick-recall slots, and mode/mic/record/panic. Optional fullscreen (graceful fallback), responsive landscape/portrait, full keyboard access with visible focus, and reduced-motion support. It's an alternate view over the same state, so switching in and out of the editor loses nothing.
 - **Performance surface** — 4 curated macros per mode, an assignable XY pad per mode, and a shared key/scale selector.
-- **FX tail** — drive → chorus → tempo-syncable delay → reverb, into a master limiter.
+- **FX tail** — drive → chorus → tempo-syncable delay → reverb, into a true master limiter: a compressor for musical gain reduction followed by a WaveShaper brickwall so the "limiter ceiling" (dBFS) is a guaranteed peak ceiling, not just a compression knee.
 - **Capture & share** — record the master out to a 16-bit **WAV**; 10 factory presets across the four modes; save your own to IndexedDB; export/import JSON; share a patch (never audio) via a URL fragment.
 - **Polyphony** — up to 8 carrier voices, oldest-note stealing, no hung notes on mode switch or device removal, and a **PANIC** button.
 - **Optional mbus publish** — the "bus" toggle in the header offers the master output to the [mbus](https://mbus.mpump.live) patchbay as a source named `mvox` (tab-to-tab WebRTC via the local **mpump** link-bridge, peer-to-peer, no server). Off by default; harmless without the bridge. The vendored mbus-client lives in `src/transport/mbus/` (provenance in its index.ts header).
@@ -134,7 +140,7 @@ worklet is a thin shell, and the UI never touches samples. Randomness is seeded/
 npm run check
 ```
 
-**158 tests across 16 files**, colocated with their source. The DSP contract every unit is held to:
+**352 tests across 31 files**, colocated with their source. The DSP contract every unit is held to:
 deterministic output, `reset()` reproducibility, finite/bounded output over long renders, and
 clamping of out-of-range input. Highlights:
 
@@ -144,6 +150,9 @@ clamping of out-of-range input. Highlights:
 - **Pitch shifter** — ±12 semitones tracked; ratio 1 near-transparent; bounded under full-scale noise.
 - **WAV encoder** — canonical RIFF/WAVE header math, mono + stereo interleave, clamp & round to int16.
 - **Presets / share / MIDI / macros** — round-trip and validation, tampered payloads clamped, MIDI byte parsing.
+- **Limiter** — the WaveShaper ceiling curve is transparent below the knee, monotonic, odd-symmetric, and provably never exceeds the chosen dBFS for any input (including master gains > 1).
+- **Engine lifecycle** — start builds the graph and reaches `running`; the ceiling curve rebuilds only when the ceiling moves; the 10-minute record cap fires a `capped` state and preserves the buffered audio; dispose closes the context.
+- **Input limits** — oversize share URLs, decoded payloads, and `.scl` files (text length + declared note count) are rejected with friendly errors before they can freeze the app.
 
 Real-voice behaviour — sibilance intelligibility, octave jumps, latency feel — is not unit-testable;
 see the manual checklist below.
@@ -154,14 +163,19 @@ Run on real hardware with headphones before a release:
 
 - [ ] **Start** on Chrome, Firefox, Safari (desktop) — worklet loads, demo voice audible.
 - [ ] **Enable mic** — headphones warning appears; after consent, live voice replaces demo; dry voice is **not** monitored through output.
-- [ ] **VOCODER** — hold keyboard chords while speaking; consonants ("s", "t") survive via the Air knob; bass boost thickens; no clicks on band-count change.
-- [ ] **HARMONY** — sing a sustained note; harmony voices snap to the selected key/scale; changing key/scale re-targets; voice count 0→4 clean.
+- [ ] **VOCODER** — hold keyboard chords while speaking; consonants ("s", "t") survive via the Air knob; bass boost thickens **while you speak and stays silent when you don't** (it now tracks the voice envelope); no clicks on band-count change.
+- [ ] **HARMONY** — sing a sustained note; harmony voices snap to the selected key/scale; changing key/scale re-targets; voice count 0→4 clean; per-voice enable/level/pan/detune audibly isolate a single voice; voicing presets load; dry vs wet balance independent.
+- [ ] **VOCODER extras** — carrier Tone darkens the sound; envelope Freeze sustains a pad through silence; Attack shapes transient response.
 - [ ] **FORMANT** — shift/size move the vowel colour; robot flattens to the held note; whisper turns voiced sound breathy; ring mod at various Hz.
 - [ ] **FOLLOW** — melody drives the synth; glide audible; silence does **not** trigger notes (raise/lower the gate).
 - [ ] **Pitch latency/accuracy** — note perceived tracking lag and any octave errors on low male / high female voices.
 - [ ] **Polyphony** — 8+ overlapping notes steal oldest; **PANIC** silences instantly; unplug a MIDI/USB mic mid-note → no hung notes.
-- [ ] **Record** → WAV downloads and plays back correctly in another app.
-- [ ] **Presets** — factory presets load per mode; save/load/delete a user preset; export/import JSON; **Share** link restores the patch in a fresh tab.
+- [ ] **Record** → WAV downloads and plays back correctly in another app; a capture left running past **10 minutes** auto-saves, shows the cap notice, and the button + state return to idle.
+- [ ] **Keyboard accessibility** — Tab reaches the on-screen keys; Enter/Space play/release a note (no double-trigger, no stuck note); the mic-warning dialog traps focus, closes on Escape, and returns focus to the trigger.
+- [ ] **Presets** — factory presets load per mode; save/load/delete a user preset; save a preset "with perf" and confirm BPM/latch/MIDI-maps restore on recall; export/import JSON; **Share** link restores the patch (sound only) in a fresh tab.
+- [ ] **Recall** — A/B store + compare swaps sound instantly; numbered slots persist across reload; a MIDI program-change message recalls the matching slot.
+- [ ] **Devices** — switch input device mid-performance (no hang, no double audio); output selector appears only where supported; Safe quality mode reduces dropouts (takes effect after restart); latency/rate readout is plausible; unplug the active input → falls back to demo voice cleanly.
+- [ ] **Performance mode** — enter from Stage; macros/XY/mode/slots all drive the live sound; fullscreen toggles (or is hidden if unsupported); layout reflows landscape↔portrait and stays usable at a narrow width; Tab reaches every control with a visible focus ring; exit returns to the editor with all state intact.
 - [ ] **PWA** — install; reload offline; app still starts.
 
 ## Privacy

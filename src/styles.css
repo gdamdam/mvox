@@ -80,8 +80,10 @@ button {
 /* Brand mark: the mvox wordmark lockup. */
 .app__title {
   margin: 0;
-  line-height: 0;
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 .app__wordmark {
   display: block;
@@ -125,8 +127,11 @@ button {
 }
 .app__version {
   color: var(--dim);
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+  align-self: flex-end;
+  padding-bottom: 2px;
 }
 .app__error {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
@@ -135,6 +140,27 @@ button {
   padding: 0.5rem 0.75rem;
   border-radius: var(--radius);
   font-size: 0.78rem;
+}
+.app__notice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid var(--accent);
+  color: var(--ink);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+}
+.app__notice-x {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
 }
 
 /* --- Transport ----------------------------------------------------------- */
@@ -254,6 +280,325 @@ button {
   font-size: 0.72rem;
   letter-spacing: 0.05em;
   color: var(--voice);
+}
+.meters__clip {
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+}
+.meters__clip--on {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+/* A knob governed by another control (e.g. Min/Max Hz under a range preset). */
+.knob--disabled {
+  opacity: 0.4;
+}
+.knob--disabled .knob__input {
+  pointer-events: none;
+}
+
+/* --- MIDI learn panel ---------------------------------------------------- */
+.midimap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.midimap__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.midimap__hint {
+  font-size: 0.68rem;
+  color: var(--dim);
+}
+.midimap__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.midimap__title {
+  margin: 0.2rem 0;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.midimap__row {
+  display: grid;
+  grid-template-columns: 1fr auto 5rem 2rem;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.74rem;
+}
+.midimap__src {
+  color: var(--voice);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.midimap__learn,
+.midimap__clear {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.68rem;
+}
+
+/* --- Performance slots (A/B + quick recall) ------------------------------ */
+.slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+.slots__ab,
+.slots__quick {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+.slots__label {
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-right: 0.2rem;
+}
+.slots__set {
+  font-size: 0.66rem;
+  padding: 0.15rem 0.4rem;
+}
+.slots__num {
+  min-width: 2rem;
+  font-variant-numeric: tabular-nums;
+}
+.slots__num--filled {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.slots__num--arm {
+  border-style: dashed;
+}
+.presets__perf {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.68rem;
+  color: var(--dim);
+}
+.presets__perf-badge {
+  color: var(--accent);
+}
+
+/* --- Harmony per-voice grid ---------------------------------------------- */
+.harmony-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.hvoices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.hvoices__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.hvoices__row--off {
+  opacity: 0.5;
+}
+.hvoices__n {
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  color: var(--dim);
+  min-width: 1.6rem;
+}
+
+/* --- Device / CPU panel -------------------------------------------------- */
+.devices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.devices__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.devices__label {
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.devices__note {
+  font-size: 0.66rem;
+  color: var(--dim);
+}
+.devices__stats {
+  font-size: 0.7rem;
+  color: var(--voice);
+  gap: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+.devices__refresh {
+  padding: 0.15rem 0.45rem;
+}
+
+/* --- Performance (stage) mode ------------------------------------------- */
+.perf-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.6rem, 2vh, 1.4rem);
+  padding: clamp(0.8rem, 3vw, 2rem);
+  background: var(--bg, #0c110f);
+  color: var(--ink);
+  overflow: auto;
+}
+.perf-stage__top,
+.perf-stage__meters,
+.perf-stage__slots,
+.perf-stage__transport {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.perf-stage__top {
+  justify-content: space-between;
+}
+.perf-stage__modes,
+.perf-stage__actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+/* Big, touch-friendly stage buttons with a clear pressed + focus state. */
+.perf-btn {
+  min-height: 48px;
+  min-width: 48px;
+  padding: 0 1rem;
+  font-size: 1rem;
+  font-family: var(--font-display);
+  letter-spacing: 0.06em;
+  background: var(--plate, #151d19);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.perf-btn--big {
+  min-height: 64px;
+  font-size: 1.15rem;
+  flex: 1;
+}
+.perf-btn--on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.perf-btn--rec {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+.perf-btn--danger {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--line));
+  color: var(--danger);
+}
+.perf-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.perf-stage__pitch {
+  font-family: var(--font-display);
+  font-size: clamp(1.4rem, 5vw, 2.6rem);
+  color: var(--voice);
+  font-variant-numeric: tabular-nums;
+}
+.perf-stage__state {
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-left: auto;
+}
+.perf-stage__body {
+  flex: 1;
+  display: flex;
+  gap: clamp(1rem, 4vw, 3rem);
+  align-items: center;
+  min-height: 0;
+}
+.perf-stage__macros {
+  display: flex;
+  gap: clamp(1rem, 3vw, 2.5rem);
+  flex-wrap: wrap;
+  flex: 1;
+  justify-content: center;
+}
+/* Scale the shared Knob up on the stage. */
+.perf-macro .knob__input {
+  width: clamp(120px, 22vw, 260px);
+  height: 24px;
+}
+.perf-macro .knob__label {
+  font-size: 1rem;
+}
+.perf-stage__xy {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+.perf-stage__xy .xypad {
+  width: min(46vw, 46vh);
+  height: min(46vw, 46vh);
+  max-width: 480px;
+  max-height: 480px;
+}
+.perf-slot {
+  min-width: 56px;
+  font-size: 1.1rem;
+}
+.perf-slot--filled {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* Portrait: stack the macros above the XY pad. */
+@media (orientation: portrait) {
+  .perf-stage__body {
+    flex-direction: column;
+  }
+}
+/* Strong, always-visible focus ring for keyboard users on the stage. */
+.perf-stage :focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Honour reduced-motion: kill transitions/animations in the stage surface. */
+@media (prefers-reduced-motion: reduce) {
+  .perf-stage,
+  .perf-stage * {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
 /* --- Engine selector ----------------------------------------------------- */

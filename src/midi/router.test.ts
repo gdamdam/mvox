@@ -50,6 +50,9 @@ function stubMidi(access: FakeAccess): void {
 const NOTE_ON = 0x90
 const NOTE_OFF = 0x80
 const CONTROL_CHANGE = 0xb0
+const PITCH_BEND = 0xe0
+const CHANNEL_PRESSURE = 0xd0
+const PROGRAM_CHANGE = 0xc0
 const CC_SUSTAIN = 64
 
 afterEach(() => {
@@ -79,9 +82,90 @@ describe('MidiRouter', () => {
     input.send([NOTE_ON, 60, 100])
     input.send([NOTE_OFF, 60, 0])
     expect(events).toEqual([
-      { type: 'noteon', note: 60, velocity: 100 / 127 },
-      { type: 'noteoff', note: 60 },
+      { type: 'noteon', note: 60, velocity: 100 / 127, channel: 0 },
+      { type: 'noteoff', note: 60, channel: 0 },
     ])
+  })
+
+  it('forwards CC, pitch bend, and channel pressure to subscribers', async () => {
+    const router = new MidiRouter()
+    const events: MidiEvent[] = []
+    router.onNote((e) => events.push(e))
+    await router.init()
+
+    input.send([CONTROL_CHANGE, 1, 127]) // mod wheel, not sustain
+    input.send([PITCH_BEND, 0x00, 0x40]) // center
+    input.send([CHANNEL_PRESSURE, 100])
+    expect(events).toEqual([
+      { type: 'cc', controller: 1, value: 127 / 127, channel: 0 },
+      { type: 'pitchbend', value: 0, channel: 0 },
+      { type: 'pressure', value: 100 / 127, channel: 0 },
+    ])
+  })
+
+  it('forwards program change events to subscribers', async () => {
+    const router = new MidiRouter()
+    const events: MidiEvent[] = []
+    router.onNote((e) => events.push(e))
+    await router.init()
+
+    input.send([PROGRAM_CHANGE, 5])
+    expect(events).toEqual([{ type: 'program', program: 5, channel: 0 }])
+  })
+
+  it('drops a program change on a non-matching channel filter', async () => {
+    const router = new MidiRouter()
+    const events: MidiEvent[] = []
+    router.onNote((e) => events.push(e))
+    await router.init()
+
+    router.setChannel(5)
+    input.send([PROGRAM_CHANGE | 3, 7]) // channel 3 → dropped
+    input.send([PROGRAM_CHANGE | 5, 9]) // channel 5 → passes
+    expect(events).toEqual([{ type: 'program', program: 9, channel: 5 }])
+  })
+
+  it('with a channel filter set, passes matching-channel events and drops others', async () => {
+    const router = new MidiRouter()
+    const events: MidiEvent[] = []
+    router.onNote((e) => events.push(e))
+    await router.init()
+
+    router.setChannel(5)
+    input.send([NOTE_ON | 5, 60, 100]) // channel 5 → passes
+    input.send([NOTE_ON | 3, 62, 100]) // channel 3 → dropped
+    input.send([CONTROL_CHANGE | 5, 1, 64]) // cc on channel 5 → passes
+    expect(events).toEqual([
+      { type: 'noteon', note: 60, velocity: 100 / 127, channel: 5 },
+      { type: 'cc', controller: 1, value: 64 / 127, channel: 5 },
+    ])
+  })
+
+  it('setChannel(null) restores all-channel routing', async () => {
+    const router = new MidiRouter()
+    const events: MidiEvent[] = []
+    router.onNote((e) => events.push(e))
+    await router.init()
+
+    router.setChannel(2)
+    input.send([NOTE_ON | 7, 60, 100]) // dropped
+    router.setChannel(null)
+    events.length = 0
+    input.send([NOTE_ON | 7, 61, 100]) // now passes
+    expect(events).toEqual([{ type: 'noteon', note: 61, velocity: 100 / 127, channel: 7 }])
+  })
+
+  it('flushes held notes when the channel filter changes (no hung note)', async () => {
+    const router = new MidiRouter()
+    const events: MidiEvent[] = []
+    router.onNote((e) => events.push(e))
+    await router.init()
+
+    input.send([NOTE_ON, 64, 90]) // held on channel 0
+    events.length = 0
+
+    router.setChannel(1) // channel 0 now filtered out; held note must release
+    expect(events).toEqual([{ type: 'noteoff', note: 64, channel: 0 }])
   })
 
   it('synthesizes note-offs for held notes when switching inputs (M6)', async () => {
@@ -96,7 +180,7 @@ describe('MidiRouter', () => {
     events.length = 0
 
     router.selectInput('in-2')
-    expect(events).toEqual([{ type: 'noteoff', note: 64 }])
+    expect(events).toEqual([{ type: 'noteoff', note: 64, channel: 0 }])
   })
 
   it('synthesizes note-offs when a held input is hot-unplugged (M6)', async () => {
@@ -113,8 +197,8 @@ describe('MidiRouter', () => {
     access.inputs.map.delete('in-1')
     access.emitStateChange()
 
-    expect(events).toContainEqual({ type: 'noteoff', note: 67 })
-    expect(events).toContainEqual({ type: 'noteoff', note: 72 })
+    expect(events).toContainEqual({ type: 'noteoff', note: 67, channel: 0 })
+    expect(events).toContainEqual({ type: 'noteoff', note: 72, channel: 0 })
   })
 
   it('does not re-fire note-offs for notes already released (M6)', async () => {
@@ -141,7 +225,7 @@ describe('MidiRouter', () => {
     events.length = 0
 
     router.dispose()
-    expect(events).toEqual([{ type: 'noteoff', note: 55 }])
+    expect(events).toEqual([{ type: 'noteoff', note: 55, channel: 0 }])
   })
 
   it('lifts a held sustain pedal BEFORE flushing notes on hot-unplug', async () => {
@@ -161,8 +245,8 @@ describe('MidiRouter', () => {
     access.emitStateChange()
 
     expect(events).toEqual([
-      { type: 'sustain', on: false },
-      { type: 'noteoff', note: 60 },
+      { type: 'sustain', on: false, channel: 0 },
+      { type: 'noteoff', note: 60, channel: 0 },
     ])
   })
 
@@ -181,7 +265,7 @@ describe('MidiRouter', () => {
     events.length = 0
 
     router.dispose()
-    expect(events).toEqual([{ type: 'sustain', on: false }])
+    expect(events).toEqual([{ type: 'sustain', on: false, channel: 0 }])
   })
 
   it('a disposed router does not re-open — a fresh one must be created (M4)', async () => {

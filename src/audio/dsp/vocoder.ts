@@ -124,6 +124,13 @@ export class EnvelopeFollower {
     return this.env;
   }
 
+  // Current envelope WITHOUT advancing it. Used by the vocoder's freeze mode to
+  // hold each band's last-tracked level while the modulator voice changes/goes
+  // silent, sustaining the pad instead of following the input down.
+  value(): number {
+    return this.env;
+  }
+
   reset(): void {
     this.env = 0;
   }

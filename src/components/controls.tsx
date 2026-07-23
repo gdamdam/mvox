@@ -14,13 +14,15 @@ interface KnobProps {
   title?: string
   /** Optional value formatter — e.g. render scale degrees as musical names. */
   format?: (v: number) => string
+  /** Greyed-out + non-interactive (e.g. a bound governed by a range preset). */
+  disabled?: boolean
   onChange: (v: number) => void
 }
 
-export function Knob({ label, value, min, max, step, unit, title, format, onChange }: KnobProps) {
+export function Knob({ label, value, min, max, step, unit, title, format, disabled, onChange }: KnobProps) {
   const display = format ? format(value) : Number.isInteger(value) ? value.toString() : value.toFixed(2)
   return (
-    <label className="knob" title={title}>
+    <label className={`knob ${disabled ? 'knob--disabled' : ''}`} title={title}>
       <span className="knob__label">{label}</span>
       <input
         className="knob__input"
@@ -29,6 +31,7 @@ export function Knob({ label, value, min, max, step, unit, title, format, onChan
         max={max}
         step={step ?? (max - min) / 100}
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange(parseFloat(e.target.value))}
       />
       <span className="knob__value">

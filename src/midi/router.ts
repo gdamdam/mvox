@@ -64,6 +64,10 @@ export class MidiRouter {
   // null = listen to ALL inputs; a string = listen to just that input id.
   private selectedInputId: string | null = null
 
+  // null = accept ALL channels; 0..15 = only events on that channel. Applied
+  // after parsing in handleInputData; 'other' events (no channel) never pass.
+  private selectedChannel: number | null = null
+
   // inputId -> attached handler (so we can detach exactly what we attached).
   private readonly inputHandlers = new Map<string, (event: { data: Uint8Array | null }) => void>()
 
@@ -136,6 +140,18 @@ export class MidiRouter {
     this.reconcileInputs()
   }
 
+  /**
+   * Restrict routing to a single MIDI channel (0..15), or null for all
+   * channels. Flushes held notes on change — a note held on the old channel can
+   * no longer be released once its channel is filtered out, so synthesize its
+   * note-off (same reasoning as selectInput).
+   */
+  setChannel(ch: number | null): void {
+    if (ch === this.selectedChannel) return
+    this.flushActiveNotes()
+    this.selectedChannel = ch
+  }
+
   // ── Input routing ───────────────────────────────────────────────────────────
 
   private reconcileInputs(): void {
@@ -167,10 +183,13 @@ export class MidiRouter {
   /** Decode an inbound buffer and fan it out to listeners. */
   private handleInputData(data: Uint8Array | number[]): void {
     const event = parseMidi(data)
-    // Silently drop traffic that isn't a note or the sustain pedal.
+    // Silently drop undecodable traffic (no channel to filter or fan on).
     if (event.type === 'other') return
+    // Per-channel filter: with a channel selected, drop everything on any other
+    // channel before it can be tracked or fanned out.
+    if (this.selectedChannel !== null && event.channel !== this.selectedChannel) return
     // Track held notes so we can release them if the input vanishes mid-hold.
-    // Sustain events carry no note and don't affect that tracking.
+    // Only note events touch that tracking; CC/bend/pressure just flow through.
     if (event.type === 'noteon') this.activeNotes.add(event.note)
     else if (event.type === 'noteoff') this.activeNotes.delete(event.note)
     else if (event.type === 'sustain') this.sustainOn = event.on
@@ -184,13 +203,15 @@ export class MidiRouter {
    * state before the note-offs land — then synthesize a note-off per held note.
    */
   private flushActiveNotes(): void {
+    // Synthetic releases carry channel 0: activeNotes tracks bare note numbers
+    // (no per-note channel), and a subscriber acts on the note regardless.
     if (this.sustainOn) {
       this.sustainOn = false
-      for (const cb of this.noteCbs) cb({ type: 'sustain', on: false })
+      for (const cb of this.noteCbs) cb({ type: 'sustain', on: false, channel: 0 })
     }
     if (this.activeNotes.size === 0) return
     for (const note of this.activeNotes) {
-      for (const cb of this.noteCbs) cb({ type: 'noteoff', note })
+      for (const cb of this.noteCbs) cb({ type: 'noteoff', note, channel: 0 })
     }
     this.activeNotes.clear()
   }

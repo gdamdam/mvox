@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { yinDetect, PitchTracker, type PitchResult } from './pitch';
+import { yinDetect, PitchTracker, type PitchResult, type YinScratch } from './pitch';
 
 const SR = 44100;
 
@@ -152,6 +152,37 @@ describe('yinDetect', () => {
     const buf = synthSine(330, SR, 2048);
     expect(yinDetect(buf, SR)).toEqual(yinDetect(buf, SR));
   });
+
+  it('reuses supplied scratch buffers and matches the allocating path bit-for-bit', () => {
+    // Regression for the audio-thread allocation defect: yinDetect must accept
+    // preallocated work buffers so the streaming path never allocates. The result
+    // must be identical whether scratch is supplied or lazily allocated.
+    const frame = synthSine(220, SR, 2048);
+    const scratch: YinScratch = {
+      diff: new Float32Array(2048),
+      cmnd: new Float32Array(2048),
+    };
+    const withScratch = yinDetect(frame, SR, {}, scratch);
+    const withoutScratch = yinDetect(frame, SR, {});
+    expect(withScratch).toEqual(withoutScratch);
+
+    // The supplied buffers were actually written into (proof the scratch path ran
+    // rather than a fresh internal allocation): a voiced frame yields non-zero
+    // difference energy in the low lag bins.
+    let touched = false;
+    for (let i = 1; i < 64; i++) {
+      if (scratch.diff[i] !== 0) {
+        touched = true;
+        break;
+      }
+    }
+    expect(touched).toBe(true);
+
+    // A too-small scratch must not corrupt output: yinDetect falls back to a lazy
+    // allocation and still returns the correct pitch.
+    const tiny: YinScratch = { diff: new Float32Array(4), cmnd: new Float32Array(4) };
+    expect(yinDetect(frame, SR, {}, tiny)).toEqual(withoutScratch);
+  });
 });
 
 describe('PitchTracker', () => {
@@ -248,6 +279,38 @@ describe('PitchTracker', () => {
     const tracker = new PitchTracker(SR, { frameSize: 1024 });
     const r = tracker.process(synthSine(220, SR, 256));
     expect(r).toEqual({ f0: 0, confidence: 0 });
+  });
+
+  it('does not allocate Float32Array in steady-state process() (audio-thread safe)', () => {
+    // Regression for GC-induced dropouts: process() runs ~375×/sec on the audio
+    // thread, so once warmed up it must allocate zero Float32Arrays per call. We
+    // count constructions deterministically (no timing/GC heuristics) by swapping
+    // in a counting subclass around a steady run of same-sized blocks.
+    const tracker = new PitchTracker(SR, { minHz: 150, frameSize: 1024, hopSize: 512 });
+    const block = synthSine(220, SR, 512);
+    // Warmup: lets any one-time internal buffer sizing settle before we measure.
+    for (let i = 0; i < 20; i++) tracker.process(block);
+
+    const RealF32 = globalThis.Float32Array;
+    let allocations = 0;
+    class CountingF32 extends RealF32 {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      constructor(...args: any[]) {
+        super(...(args as []));
+        allocations++;
+      }
+    }
+    // subarray()/set()/copyWithin() use the SpeciesConstructor of the *existing*
+    // (real) arrays, so they never route through this patched global — only a
+    // literal `new Float32Array(...)` inside process() would bump the counter.
+    (globalThis as unknown as { Float32Array: typeof Float32Array }).Float32Array =
+      CountingF32 as unknown as typeof Float32Array;
+    try {
+      for (let i = 0; i < 100; i++) tracker.process(block);
+    } finally {
+      (globalThis as unknown as { Float32Array: typeof Float32Array }).Float32Array = RealF32;
+    }
+    expect(allocations).toBe(0);
   });
 });
 

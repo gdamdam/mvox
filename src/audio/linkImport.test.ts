@@ -94,4 +94,13 @@ describe('importTuningFromUrl', () => {
     expect(await importTuningFromUrl('https://example.com/#foo=bar')).toBeNull()
     expect(await importTuningFromUrl('https://mdrone.mpump.live/#?b=%%%not-base64%%%')).toBeNull()
   })
+
+  it('rejects an oversized URL without freezing (DEFECT #11)', async () => {
+    // A multi-megabyte paste must be refused up front, before any URL/param
+    // parsing or decoding — returning null (the same "unusable link" path).
+    const huge = 'https://mdrone.mpump.live/#?b=' + 'A'.repeat(200 * 1024)
+    const started = Date.now()
+    expect(await importTuningFromUrl(huge)).toBeNull()
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
 })

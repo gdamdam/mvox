@@ -104,6 +104,20 @@ describe("EnvelopeFollower", () => {
     expect(y).toBeGreaterThanOrEqual(0);
   });
 
+  it("value() returns the current envelope without advancing it", () => {
+    const env = new EnvelopeFollower(FS, 5, 50);
+    sineBlock(env, 0.8, 440, 5000); // settle to a non-zero level
+    const before = env.value();
+    // Reading the value repeatedly must not change it (no processing happens).
+    expect(env.value()).toBe(before);
+    expect(env.value()).toBe(before);
+    expect(before).toBeGreaterThan(0);
+    // It equals the last processed envelope value, not a fresh one.
+    const advanced = env.process(0.8 * Math.sin((2 * Math.PI * 440 * 5000) / FS));
+    expect(advanced).not.toBe(before); // process() DID advance
+    expect(env.value()).toBe(advanced); // value() now mirrors the advanced state
+  });
+
   it("reset() returns the follower to zero state", () => {
     const env = new EnvelopeFollower(FS, 5, 50);
     sineBlock(env, 1, 300, 2000);

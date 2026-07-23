@@ -6,12 +6,27 @@
 
 import type { MvoxPatch } from "../audio/contracts";
 import { migratePatch } from "./schema";
+import { sanitizePerfSnapshot, type PerfSnapshot } from "./session";
 
 export interface UserPreset {
   id: string;
   name: string;
   createdAt: number;
   patch: MvoxPatch;
+  // Optional portable performance snapshot (BPM, latch, MIDI mappings, channel).
+  // Absent on legacy presets — those load as sound-only, preserving compatibility.
+  perf?: PerfSnapshot;
+}
+
+// Explicit write outcome. Writes NEVER throw or reject: a rejected promise from
+// a fire-and-forget save/delete during a live performance would surface as an
+// unhandled rejection (and callers that don't await would crash). Instead we
+// resolve a discriminated result the caller can inspect to show a real
+// error/toast instead of falsely implying the save succeeded (DEFECT #7).
+export type IdbResult = { ok: true } | { ok: false; error: string };
+
+function errMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : String(err);
 }
 
 const DB_NAME = "mvox";
@@ -103,21 +118,28 @@ function withStore<T>(
   );
 }
 
-// Upsert a preset. Swallows errors: persistence is best-effort, and a failed save
-// should not crash a live performance.
-export async function idbSavePreset(p: UserPreset): Promise<void> {
+// Upsert a preset. Persistence is best-effort — a failed save must not crash a
+// live performance — but it must NOT silently report success: we surface the
+// failure as { ok: false, error } so the UI can tell the user the save didn't
+// stick (private-browsing, disabled storage, quota, DataCloneError, …).
+export async function idbSavePreset(p: UserPreset): Promise<IdbResult> {
   try {
     await withStore("readwrite", (store) => store.put(p));
-  } catch {
-    // no-op: storage unavailable or write rejected
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: errMessage(err) };
   }
 }
 
-export async function idbDeletePreset(id: string): Promise<void> {
+// Delete by id. Deleting a missing key is not an error in IndexedDB (the request
+// simply succeeds), so it resolves { ok: true }; only a real storage failure
+// yields { ok: false }.
+export async function idbDeletePreset(id: string): Promise<IdbResult> {
   try {
     await withStore("readwrite", (store) => store.delete(id));
-  } catch {
-    // no-op
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: errMessage(err) };
   }
 }
 
@@ -150,6 +172,8 @@ export async function idbListPresets(): Promise<UserPreset[]> {
           // bad row is left on disk (a later newer build can still read it) — we
           // neither surface nor destroy it.
           patch: migratePatch(row?.patch),
+          // Legacy presets have no perf → sound-only load (undefined preserved).
+          perf: row?.perf == null ? undefined : sanitizePerfSnapshot(row.perf),
         });
       } catch {
         // Skip this row only; a partial/corrupt/future record must not blank the

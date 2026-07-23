@@ -12,6 +12,12 @@ export type EngineMode = (typeof ENGINE_MODES)[number]
 export const CARRIER_WAVES = ['saw', 'pulse', 'noise'] as const
 export type CarrierWave = (typeof CARRIER_WAVES)[number]
 
+// Vocal-range presets bound the pitch tracker's search. 'all' is the wide default;
+// 'custom' means "use the explicit min/max Hz below". The named ranges are rough
+// singer tessituras (see vocalRange.ts for the Hz bounds).
+export const VOCAL_RANGES = ['all', 'bass', 'tenor', 'alto', 'soprano', 'custom'] as const
+export type VocalRange = (typeof VOCAL_RANGES)[number]
+
 // ---------------------------------------------------------------------------
 // Parameter ranges — one entry per numeric parameter. Used both for clamping in
 // sanitizePatch() and (later) for UI control bounds, so the two can never drift.
@@ -30,17 +36,37 @@ export const RANGES = {
   keyRoot: R(0, 11, 0),
   masterGain: R(0, 1.5, 0.9),
   monitorMix: R(0, 1, 0), // dry voice into output; 0 by default for feedback + privacy
+  // input conditioning (applied to the voice before analysis AND processing)
+  inputGain: R(0, 4, 1), // linear pre-gain, up to +12 dB, for a quiet mic
+  gateThreshold: R(0, 0.5, 0), // noise-gate open level (RMS-ish); 0 = gate off
+  gateRelease: R(0, 1, 0.25), // how slowly the gate closes (knob 0..1)
+  // pitch tracking
+  trackMinHz: R(40, 2000, 70),
+  trackMaxHz: R(80, 4000, 1000),
+  pitchSmoothing: R(0, 1, 0.2), // one-pole smoothing on detected f0
+  pitchHysteresis: R(0, 1, 0.3), // resist note-boundary chatter
   // vocoder
   vocoderBands: R(8, 32, 20),
   vocoderBassBoost: R(0, 1, 0.35),
   vocoderSibilance: R(0, 1, 0.4), // unvoiced/HF noise passthrough
   vocoderRelease: R(0, 1, 0.3),
+  vocoderAttack: R(0.2, 50, 3), // ms; default 3 = the previous fixed analysis attack
+  vocoderTone: R(0, 1, 1), // carrier low-pass; 1 = fully open (bypassed, unchanged)
   vocoderCarrierMix: R(0, 1, 1),
+  vocoderCarrierOctave: R(-2, 2, 0), // carrier transpose in octaves (0 = unchanged)
+  vocoderUnison: R(1, 4, 1), // detuned carrier voices per note (1 = unchanged)
+  vocoderUnisonDetune: R(0, 50, 0), // unison spread, cents (0 = unchanged)
+  vocoderPulseWidth: R(0.05, 0.95, 0.5), // pulse duty (0.5 = square, unchanged)
   // harmony
   harmonyVoiceCount: R(0, 4, 2),
   harmonyLevel: R(0, 1, 0.7),
+  harmonyDryLevel: R(0, 1, 1), // independent dry-lead level (1 = unchanged)
   harmonySpread: R(0, 1, 0.5), // pan spread across voices
   harmonyDetune: R(0, 50, 8), // cents
+  harmonyVoiceLevel: R(0, 1, 1), // per-voice level multiplier
+  harmonyVoicePan: R(-1, 1, 0), // per-voice pan OFFSET added to the auto spread
+  harmonyVoiceDetune: R(-50, 50, 0), // per-voice detune OFFSET (cents)
+  harmonyResponse: R(0, 1, 1), // snap/glide response; 1 = instant (unchanged), lower = glides
   harmonyFormantPreserve: R(0, 1, 0.8),
   // formant
   formantShift: R(-12, 12, 0), // semitones of spectral-envelope shift
@@ -107,6 +133,17 @@ export interface SharedParams {
   tuning: TuningSpec
   masterGain: number
   monitorMix: number
+  inputGain: number
+  gateThreshold: number
+  gateRelease: number
+}
+
+export interface TrackingParams {
+  rangePreset: VocalRange
+  minHz: number
+  maxHz: number
+  smoothing: number
+  hysteresis: number
 }
 
 export interface VocoderParams {
@@ -114,8 +151,15 @@ export interface VocoderParams {
   bassBoost: number
   sibilance: number
   release: number
+  attack: number // analysis-envelope attack, ms
+  tone: number // carrier low-pass, 0..1 (1 = open)
+  freeze: boolean // hold the band envelopes for a sustained pad
   carrierWave: CarrierWave
   carrierMix: number
+  carrierOctave: number // carrier transpose, octaves
+  unison: number // detuned carrier voices per note
+  unisonDetune: number // unison spread, cents
+  pulseWidth: number // pulse duty cycle (0.5 = square)
 }
 
 export interface HarmonyParams {
@@ -123,9 +167,17 @@ export interface HarmonyParams {
   // degree offsets of the four possible harmony voices, in scale degrees
   intervals: [number, number, number, number]
   level: number
+  dryLevel: number // independent dry-lead level
   spread: number
   detune: number
   formantPreserve: number
+  response: number // pitch-shift glide response; 1 = instant
+  keyboardHarmony: boolean // harmonize to held keyboard notes instead of degree offsets
+  // per-voice independent controls (length 4); defaults are behaviour-preserving.
+  voiceEnabled: [boolean, boolean, boolean, boolean]
+  voiceLevel: [number, number, number, number]
+  voicePan: [number, number, number, number] // offset added to the auto spread
+  voiceDetune: [number, number, number, number] // cents offset
 }
 
 export interface FormantParams {
@@ -166,6 +218,7 @@ export interface MvoxPatch {
   name: string
   mode: EngineMode
   shared: SharedParams
+  tracking: TrackingParams
   vocoder: VocoderParams
   harmony: HarmonyParams
   formant: FormantParams
@@ -192,22 +245,46 @@ export const DEFAULT_PATCH: MvoxPatch = Object.freeze({
     tuning: { name: 'Default', scaleCents: [] as number[], period: 1200 },
     masterGain: RANGES.masterGain.default,
     monitorMix: RANGES.monitorMix.default,
+    inputGain: RANGES.inputGain.default,
+    gateThreshold: RANGES.gateThreshold.default,
+    gateRelease: RANGES.gateRelease.default,
+  },
+  tracking: {
+    rangePreset: 'all' as VocalRange,
+    minHz: RANGES.trackMinHz.default,
+    maxHz: RANGES.trackMaxHz.default,
+    smoothing: RANGES.pitchSmoothing.default,
+    hysteresis: RANGES.pitchHysteresis.default,
   },
   vocoder: {
     bands: RANGES.vocoderBands.default,
     bassBoost: RANGES.vocoderBassBoost.default,
     sibilance: RANGES.vocoderSibilance.default,
     release: RANGES.vocoderRelease.default,
+    attack: RANGES.vocoderAttack.default,
+    tone: RANGES.vocoderTone.default,
+    freeze: false,
     carrierWave: 'saw' as CarrierWave,
     carrierMix: RANGES.vocoderCarrierMix.default,
+    carrierOctave: RANGES.vocoderCarrierOctave.default,
+    unison: RANGES.vocoderUnison.default,
+    unisonDetune: RANGES.vocoderUnisonDetune.default,
+    pulseWidth: RANGES.vocoderPulseWidth.default,
   },
   harmony: {
     voiceCount: RANGES.harmonyVoiceCount.default,
     intervals: [2, 4, -3, 7] as [number, number, number, number],
     level: RANGES.harmonyLevel.default,
+    dryLevel: RANGES.harmonyDryLevel.default,
     spread: RANGES.harmonySpread.default,
     detune: RANGES.harmonyDetune.default,
     formantPreserve: RANGES.harmonyFormantPreserve.default,
+    response: RANGES.harmonyResponse.default,
+    keyboardHarmony: false,
+    voiceEnabled: [true, true, true, true] as [boolean, boolean, boolean, boolean],
+    voiceLevel: [1, 1, 1, 1] as [number, number, number, number],
+    voicePan: [0, 0, 0, 0] as [number, number, number, number],
+    voiceDetune: [0, 0, 0, 0] as [number, number, number, number],
   },
   formant: {
     shift: RANGES.formantShift.default,
@@ -303,10 +380,43 @@ function sanitizeTuning(raw: unknown): TuningSpec {
   return { name, scaleCents: cents.slice(), period }
 }
 
+function sanitizeTracking(raw: unknown): TrackingParams {
+  const r = isRecord(raw) ? raw : {}
+  const d = DEFAULT_PATCH.tracking
+  let minHz = clamp(r.minHz, RANGES.trackMinHz)
+  let maxHz = clamp(r.maxHz, RANGES.trackMaxHz)
+  // Keep the window valid and non-degenerate regardless of stored/tampered values:
+  // max must clear min by at least an octave-ish margin so YIN has room to work.
+  if (maxHz <= minHz * 1.2) {
+    minHz = d.minHz
+    maxHz = d.maxHz
+  }
+  return {
+    rangePreset: coerceEnum(r.rangePreset, VOCAL_RANGES, d.rangePreset),
+    minHz,
+    maxHz,
+    smoothing: clamp(r.smoothing, RANGES.pitchSmoothing),
+    hysteresis: clamp(r.hysteresis, RANGES.pitchHysteresis),
+  }
+}
+
 function clampInterval(v: unknown, fallback: number): number {
   if (typeof v !== 'number' || !Number.isFinite(v)) return fallback
   // Harmony intervals are scale degrees; keep within ±2 octaves of diatonic reach.
   return Math.max(-14, Math.min(14, Math.round(v)))
+}
+
+// Coerce a possibly-partial array into a fixed-length-4 tuple of clamped numbers.
+function clampQuad(raw: unknown, range: Range): [number, number, number, number] {
+  const a = Array.isArray(raw) ? raw : []
+  return [clamp(a[0], range), clamp(a[1], range), clamp(a[2], range), clamp(a[3], range)]
+}
+
+// Coerce into a length-4 boolean tuple; a missing/garbage entry defaults to `def`.
+function boolQuad(raw: unknown, def: boolean): [boolean, boolean, boolean, boolean] {
+  const a = Array.isArray(raw) ? raw : []
+  const b = (i: number) => (typeof a[i] === 'boolean' ? (a[i] as boolean) : def)
+  return [b(0), b(1), b(2), b(3)]
 }
 
 /**
@@ -336,14 +446,25 @@ export function sanitizePatch(raw: unknown): MvoxPatch {
       tuning: sanitizeTuning(shared.tuning),
       masterGain: clamp(shared.masterGain, RANGES.masterGain),
       monitorMix: clamp(shared.monitorMix, RANGES.monitorMix),
+      inputGain: clamp(shared.inputGain, RANGES.inputGain),
+      gateThreshold: clamp(shared.gateThreshold, RANGES.gateThreshold),
+      gateRelease: clamp(shared.gateRelease, RANGES.gateRelease),
     },
+    tracking: sanitizeTracking(r.tracking),
     vocoder: {
       bands: clampInt(voc.bands, RANGES.vocoderBands),
       bassBoost: clamp(voc.bassBoost, RANGES.vocoderBassBoost),
       sibilance: clamp(voc.sibilance, RANGES.vocoderSibilance),
       release: clamp(voc.release, RANGES.vocoderRelease),
+      attack: clamp(voc.attack, RANGES.vocoderAttack),
+      tone: clamp(voc.tone, RANGES.vocoderTone),
+      freeze: typeof voc.freeze === 'boolean' ? voc.freeze : d.vocoder.freeze,
       carrierWave: coerceEnum(voc.carrierWave, CARRIER_WAVES, d.vocoder.carrierWave),
       carrierMix: clamp(voc.carrierMix, RANGES.vocoderCarrierMix),
+      carrierOctave: clampInt(voc.carrierOctave, RANGES.vocoderCarrierOctave),
+      unison: clampInt(voc.unison, RANGES.vocoderUnison),
+      unisonDetune: clamp(voc.unisonDetune, RANGES.vocoderUnisonDetune),
+      pulseWidth: clamp(voc.pulseWidth, RANGES.vocoderPulseWidth),
     },
     harmony: {
       voiceCount: clampInt(har.voiceCount, RANGES.harmonyVoiceCount),
@@ -354,9 +475,16 @@ export function sanitizePatch(raw: unknown): MvoxPatch {
         clampInterval(har2[3], d.harmony.intervals[3]),
       ],
       level: clamp(har.level, RANGES.harmonyLevel),
+      dryLevel: clamp(har.dryLevel, RANGES.harmonyDryLevel),
       spread: clamp(har.spread, RANGES.harmonySpread),
       detune: clamp(har.detune, RANGES.harmonyDetune),
       formantPreserve: clamp(har.formantPreserve, RANGES.harmonyFormantPreserve),
+      response: clamp(har.response, RANGES.harmonyResponse),
+      keyboardHarmony: typeof har.keyboardHarmony === 'boolean' ? har.keyboardHarmony : d.harmony.keyboardHarmony,
+      voiceEnabled: boolQuad(har.voiceEnabled, true),
+      voiceLevel: clampQuad(har.voiceLevel, RANGES.harmonyVoiceLevel),
+      voicePan: clampQuad(har.voicePan, RANGES.harmonyVoicePan),
+      voiceDetune: clampQuad(har.voiceDetune, RANGES.harmonyVoiceDetune),
     },
     formant: {
       shift: clamp(fmt.shift, RANGES.formantShift),
@@ -412,10 +540,12 @@ export type MainToWorkletMessage =
 
 export interface Telemetry {
   type: 'telemetry'
-  inputLevel: number // 0..1 RMS of voice input
+  inputLevel: number // 0..1 RMS of voice input (post input-gain, pre-gate)
+  inputClip: boolean // true when the post-gain input reached full scale this block
   outputPeak: number // 0..1
-  f0: number // detected voice pitch, Hz (0 = unvoiced)
+  f0: number // detected voice pitch, Hz (0 = unvoiced), post-smoothing
   confidence: number // 0..1
+  targetHz: number // the note the engine is snapping/gliding to, Hz (0 = none)
   activeVoices: number
 }
 
